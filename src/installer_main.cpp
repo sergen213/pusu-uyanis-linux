@@ -169,6 +169,8 @@ void start_install(GtkButton*, gpointer data) {
 int graphical_install() {
     const auto schemas = pusu::executable_directory() / "../share/glib-2.0/schemas";
     if (fs::is_directory(schemas)) g_setenv("GSETTINGS_SCHEMA_DIR", schemas.c_str(), TRUE);
+    const auto thai_dictdir = pusu::executable_directory() / "../share/libthai";
+    if (fs::is_regular_file(thai_dictdir / "thbrk.tri")) g_setenv("LIBTHAI_DICTDIR", thai_dictdir.c_str(), TRUE);
     if (!gtk_init_check(nullptr, nullptr)) throw std::runtime_error("Cannot open a graphical display. Use --install or --extract-only for command-line installation.");
     Installer ui;
     ui.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);

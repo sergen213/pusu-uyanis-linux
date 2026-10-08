@@ -11,19 +11,34 @@ an override must agree with that installed name/version. Explicit `licenses`
 may refine ambiguous Arch IDs; installed declarations remain in the manifest.
 `notices` and `copyright_files` contain paths or {path, sha256} objects, never
 SPDX text substituted for upstream notices. GNU IDs must specify their version.
-Public/strict mode requires `copyright_complete: true` for private packages;
-one header's notice alone is not a complete matched compiled-source inventory.
+`copyright_complete` is retained as audit metadata, not an exhaustive-inventory
+release gate; genuine applicable notices and explicit unresolved duties remain.
 
 source: {url, corresponding_to: [original ELF sha256, ...], archives:
 [{path, sha256}], recipe: {path, sha256}, build_materials: [{path, sha256}]}.
 Hash-bound recipe_ancillary_files, embedded_configuration and
 build_evidence_archive are also copied as build materials. Strict mode requires
-immutable version/revision origin and actual GPL/LGPL source archives plus exact
-build recipe/configuration, not homepage offers.
-Local mode copies available genuine materials and records missing public
-redistribution obligations; asserted paths/hashes/identities remain mandatory.
-`correspondence_attested: false` records unverified downstream correspondence.
-Explicit provenance is a maintainer attestation, not a legal determination.
+actual GPL/LGPL source archives mapped to the ELF hashes plus exact build
+recipe/configuration. A remote immutable URL is optional for local delivery.
+MPL-1.1/2.0 require mapped Covered Software source archives and a hash-bound
+source.availability_notice identifying the MPL source and delivered archive
+filenames (or the package NOTICE.txt archive list). MPL-1.1 also requires its
+covered build/install scripts in recipe or covered_build_scripts [{path, sha256}].
+MPL-2.0 does not require a GNU whole-work recipe. Evidence-backed `licenses`
+overrides select component/elected scope; OR and unknown scopes stay unresolved,
+and known WITH exceptions never automatically waive underlying source duties.
+Missing/unpinned optional origins and false optional correspondence are
+nonblocking provenance diagnostics, never changed into positive attestations.
+Nonstandard grants may supply license_scopes [{license, scope, delivery,
+terms: {path, sha256}}], explicitly identifying included components and reviewed
+notice-only or source-required duties. Artistic-1.0 may explicitly elect
+standard-version delivery under section 4(a), with actual source archives and
+source.availability_notice directions, not invented downstream correspondence.
+Exact original grant terms are delivered, not relabeled MIT. These attestations
+cannot downgrade known GNU/MPL duties.
+Local mode records missing delivery duties. Claimed paths, hashes, URL/revision
+syntax and ELF mappings remain mandatory in both modes. Explicit provenance
+and a passing conditional-delivery gate are not legal clearance.
 Project authorship is not a license grant. An optional project_author.license_grant
 requires {license: "GPL-3.0-only" or "GPL-3.0-or-later", scope:
 "newly-authored-native-implementation", text: {path, sha256}}. The text must
@@ -55,8 +70,22 @@ _GNU = {
 }
 _COPYRIGHT = re.compile(r"(?:copyright\s*:?\s*(?:\(c\)|©)?|©|\(c\))\s*\d{4}", re.IGNORECASE)
 _LICENSE_TERMS = re.compile(r"permission is (?:hereby )?granted|redistribution and use|licen[cs]e|public domain|waiver", re.IGNORECASE)
+_SCOPED_GRANT = re.compile(r"permission is (?:hereby )?granted|permission to (?:use|copy).{0,160}granted|authors hereby grant permission to use, copy, modify|redistribution and use|public domain|free software.{0,100}redistribut|licen[cs]ed under|may.{0,40}(?:use|redistribut|copy)|(?:hereby )?grants.{0,256}patent\s+licen[cs]e|distribute and use freely;\s*there are no restrictions on further\s+dissemination and usage", re.IGNORECASE | re.DOTALL)
+_OPTIONAL_CREDIT_GRANT = re.compile(r"use this source code in any fashion you see fit.{0,160}giving me credit.{0,160}(?:is\s+)?optional", re.IGNORECASE | re.DOTALL)
+_SOURCE_DUTY = re.compile(r"GNU (?:Lesser |Affero )?General Public License|Mozilla Public License|(?:must|shall|required).{0,100}(?:supply|provide|deliver|available).{0,50}source|source.{0,50}(?:must|shall).{0,100}(?:supply|provide|deliver|available)", re.IGNORECASE | re.DOTALL)
+_PUBLIC_DOMAIN_GRANT = re.compile(r"(?:is|are)\s+(?:now\s+)?in\s+(?:the\s+)?public domain|(?:dedicat|releas|plac)\w*.{0,160}public domain", re.IGNORECASE | re.DOTALL)
+_PUBLIC_DOMAIN_IDS = {"Public-Domain", "LicenseRef-PublicDomain", "LicenseRef-Public-Domain", "CC0-1.0", "Unlicense"}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".rs", ".s", ".S", ".f", ".f90", ".m", ".mm", ".py", ".pl"}
+_NOTICE_ONLY = {
+    "MIT", "MIT-0", "MIT-open-group", "X11", "0BSD", "BSD-1-Clause", "BSD-2-Clause", "BSD-3-Clause",
+    "BSD-4-Clause", "BSD-4-Clause-UC", "BSD-3-Clause-Clear", "ISC", "Apache-2.0", "Zlib", "CC0-1.0",
+    "Unlicense", "HPND", "HPND-sell-variant", "Unicode-DFS-2016", "Unicode-3.0",
+    "NAIST-2003", "SMLNJ", "FTL", "IJG", "libpng-2.0", "libtiff", "SunPro",
+    "Public-Domain", "LicenseRef-PublicDomain", "LicenseRef-Public-Domain",
+}
+# These retain the underlying grant's duties; no blanket WITH source exemption.
+_KNOWN_EXCEPTIONS = {"GCC-exception-3.1", "LLVM-exception", "Linux-syscall-note", "PCRE2-exception"}
 
 
 def _sha256(path: Path) -> str:
@@ -171,13 +200,23 @@ def _gnu_licenses(licenses: list[str]) -> list[tuple[str, Path]]:
     return result
 
 
+def _http_source_url(url: object) -> bool:
+    if not isinstance(url, str) or not url or re.search(r"[\s\x00-\x1f\x7f]", url):
+        return False
+    try:
+        parsed = urlsplit(url)
+        return parsed.scheme in {"https", "http"} and bool(parsed.hostname) and (parsed.port is None or 0 < parsed.port <= 65535)
+    except ValueError:
+        return False
+
+
 def _source_url(source: dict, version: str) -> str:
     url = source.get("url")
-    if not isinstance(url, str) or urlsplit(url).scheme not in {"https", "http"} or not urlsplit(url).netloc:
+    if not _http_source_url(url):
         raise ValueError("source.url must be an explicit versioned HTTP(S) source URL")
     decoded = unquote(url)
     revision = source.get("revision")
-    if revision is not None:
+    if "revision" in source:
         if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision) or revision not in decoded:
             raise ValueError("source.revision must be a full immutable revision present in source.url")
     else:
@@ -199,8 +238,28 @@ def _archive_has_source(path: Path) -> bool:
         return False
 
 
-def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tuple[dict, list[tuple[str, Path]], str]:
+def _archive_has_copyright(path: Path) -> bool:
+    """Find original source-form headers, not a generic COPYING document."""
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            for item in archive.infolist():
+                if not item.is_dir() and Path(item.filename).suffix in _SOURCE_EXTENSIONS:
+                    with archive.open(item) as stream:
+                        if _COPYRIGHT.search(stream.read(131072).decode("utf-8", errors="replace")):
+                            return True
+    else:
+        with tarfile.open(path, "r:*") as archive:
+            for item in archive:
+                if item.isfile() and Path(item.name).suffix in _SOURCE_EXTENSIONS:
+                    with archive.extractfile(item) as stream:
+                        if _COPYRIGHT.search(stream.read(131072).decode("utf-8", errors="replace")):
+                            return True
+    return False
+
+
+def _resolve(entry: dict, members: list[dict], base: Path, strict: bool, *, project_notice: str = "") -> tuple[dict, list[tuple[str, Path]], str]:
     obligations = []
+    diagnostics = []
     integrity = []
     assets: list[tuple[str, Path]] = []
     package = entry.get("package")
@@ -212,9 +271,55 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
     licenses = _strings(entry.get("licenses"), "licenses")
     if not licenses:
         obligations.append("declared package licenses missing")
+    scopes = entry.get("license_scopes", [])
+    if not isinstance(scopes, list):
+        raise ValueError("license_scopes must be a list")
+    scoped_grants = {}
+    scoped_notices = set()
+    scoped_optional_credit = {}
+    scoped_source_required = False
+    standard_version_required = False
+    for value in scopes:
+        if not isinstance(value, dict):
+            raise ValueError("license_scopes entries must be objects")
+        label = value.get("license")
+        scope = value.get("scope")
+        delivery = value.get("delivery")
+        if not isinstance(label, str) or not label.strip() or not any(label == component for expression in licenses for component in re.split(r"\s+AND\s+", expression)):
+            raise ValueError("license_scopes must name an exact declared component grant")
+        if not isinstance(scope, str) or not scope.strip() or not isinstance(delivery, str) or delivery not in {"notice-only", "source-required", "standard-version"}:
+            raise ValueError("license_scopes requires actual component scope and supported delivery duty")
+        if delivery == "standard-version" and label != "Artistic-1.0":
+            raise ValueError("standard-version delivery is only supported for explicit Artistic-1.0 section 4(a) scope")
+        path = _asset(value.get("terms"), base, hashed=True)
+        text = path.read_text(encoding="utf-8")
+        # Match presentation, never rewrite the hash-bound delivered terms.
+        grant_text = " ".join(re.sub(r"(?m)^[ \t]*\* ?", "", text).split())
+        if not (_SCOPED_GRANT.search(grant_text) or _OPTIONAL_CREDIT_GRANT.search(grant_text)):
+            raise ValueError("license_scopes terms do not establish an actual grant or waiver")
+        if delivery == "notice-only" and (re.search(r"\b(?:A?GPL|LGPL|MPL)(?:[-0-9]|$)", label) or _SOURCE_DUTY.search(grant_text)):
+            raise ValueError("notice-only license scope cannot waive GNU/MPL or explicit source-delivery terms")
+        scoped_grants[label] = value
+        scoped_optional_credit[label] = scoped_optional_credit.get(label, True) and bool(_OPTIONAL_CREDIT_GRANT.search(grant_text))
+        scoped_notices.add(path)
+        scoped_source_required |= delivery == "source-required"
+        standard_version_required |= delivery == "standard-version"
     gnu = []
     gnu_required = any(re.search(r"(?:A?GPL|LGPL)(?:[-0-9]|$)", expression) for expression in licenses)
+    mpl_required = any(re.search(r"\bMPL-(?:1\.1|2\.0)\b", expression) for expression in licenses)
+    mpl11_required = any(re.search(r"\bMPL-1\.1\b", expression) for expression in licenses)
+    source_required = gnu_required or mpl_required or scoped_source_required
     for expression in licenses:
+        # Flat scope only: callers must explicitly elect OR alternatives.
+        for component in re.split(r"\s+AND\s+", expression):
+            if " OR " in component or "(" in component or ")" in component:
+                obligations.append("license alternative/component scope requires an evidence-backed licenses override: " + expression)
+                continue
+            grant, separator, exception = component.partition(" WITH ")
+            if separator and exception not in _KNOWN_EXCEPTIONS:
+                obligations.append("license exception scope is not established: " + component)
+            if grant not in _NOTICE_ONLY and grant not in scoped_grants and grant not in {"MPL-1.1", "MPL-2.0"} and not re.fullmatch(r"(?:GPL|LGPL)(?:[-0-9][A-Za-z0-9.+-]*|[0-9]*)", grant):
+                obligations.append("custom or unsupported license duties require exact component/grant scope: " + grant)
         try:
             for item in _gnu_licenses([expression]):
                 if item not in gnu:
@@ -237,7 +342,7 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
                     except ValueError as reference_error:
                         obligations.append("GNU catalogue reference unavailable: " + str(reference_error))
     assets.extend(("gnu", path) for _, path in gnu)
-    notice_paths = set()
+    notice_paths = set(scoped_notices)
     installed_dir = Path("/usr/share/licenses") / package
     if entry.get("installed") and installed_dir.is_dir():
         notice_paths.update(path.resolve() for path in installed_dir.resolve().rglob("*") if path.is_file())
@@ -251,10 +356,10 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
                 notice_paths.add(_asset(value, base))
             except (ValueError, OSError) as error:
                 integrity.append(str(error))
-    copyright_found = False
-    if not entry.get("installed") and entry.get("copyright_complete") is not True:
-        obligations.append("complete compiled-source copyright inventory not attested")
-    license_found = bool(gnu)
+    # Validated project authorship is separate from upstream/FSF attribution.
+    copyright_found = bool(project_notice)
+    license_found = bool(gnu) or bool(scoped_grants)
+    public_domain_found = False
     common_hashes = {_sha256(path) for _, path in gnu}
     for path in sorted(notice_paths):
         try:
@@ -269,6 +374,7 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
                 )
             )
             copyright_found |= not generic and bool(_COPYRIGHT.search(text))
+            public_domain_found |= not generic and bool(_PUBLIC_DOMAIN_GRANT.search(text))
             license_found |= bool(_LICENSE_TERMS.search(text))
             normalized = " ".join(text.lower().split())
             zlib_terms = "the origin of this software must not be misrepresented" in normalized and "altered source versions must be plainly marked" in normalized
@@ -277,12 +383,6 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
             assets.append(("notice", path))
         except OSError as error:
             integrity.append(str(error))
-    if not notice_paths:
-        obligations.append("exact package license/copyright notices missing; standard SPDX text is insufficient")
-    if not copyright_found:
-        obligations.append("upstream copyright notice not established in exact package notice files")
-    if not license_found:
-        obligations.append("exact package license terms not established in supplied notices")
     origin = entry.get("origin")
     if not isinstance(origin, str) or not origin.strip():
         raise ValueError("substantiated package origin required")
@@ -295,42 +395,48 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
         url = _source_url(source, version)
         pinned = True
     except ValueError as error:
-        obligations.append(str(error))
-        if url and (not isinstance(url, str) or urlsplit(url).scheme not in {"https", "http"} or not urlsplit(url).netloc):
+        diagnostics.append(str(error))
+        if "url" in source and not _http_source_url(url):
             integrity.append("malformed claimed source URL")
         revision = source.get("revision")
-        if revision is not None and (not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision) or not isinstance(url, str) or revision not in url):
+        if "revision" in source and (not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision) or not isinstance(url, str) or revision not in unquote(url)):
             integrity.append("invalid or mismatched claimed source revision")
     corresponding = _strings(source.get("corresponding_to"), "source.corresponding_to")
     if any(not _SHA256.fullmatch(digest) for digest in corresponding):
         integrity.append("source.corresponding_to contains invalid ELF sha256")
-    missing = sorted({member["sha256"] for member in members} - set(corresponding))
-    if gnu_required and missing:
+    member_hashes = {member["sha256"] for member in members}
+    missing = sorted(member_hashes - set(corresponding))
+    if source_required and missing:
         obligations.append("source correspondence unverified for original ELF sha256: " + ", ".join(missing))
-    if corresponding and missing:
-        integrity.append("claimed corresponding_to hashes do not include all original bundled ELF hashes")
+    if corresponding and (missing or set(corresponding) - member_hashes):
+        integrity.append("claimed corresponding_to hashes do not match all original bundled ELF hashes")
     if source.get("correspondence_attested") is False:
-        obligations.append("supplied upstream sources are not attested as exact downstream corresponding sources")
+        message = "supplied upstream sources are not attested as exact downstream corresponding sources"
+        (obligations if source_required else diagnostics).append(message)
     archives = source.get("archives", [])
     if not isinstance(archives, list):
         raise ValueError("source.archives must be a list")
-    if gnu_required and not archives:
-        obligations.append("GPL/LGPL requires supplied corresponding source archives with sha256, not URL-only offers")
+    if (source_required or standard_version_required) and not archives:
+        obligations.append("selected source-delivery scope requires supplied source archives with sha256, not URL-only offers")
+    source_paths = []
     for value in archives:
         try:
             path = _asset(value, base, hashed=True)
             if not _archive_has_source(path):
                 raise ValueError("claimed source archive has no regular source files or is not tar/zip: " + str(path))
             assets.append(("source", path))
-        except (ValueError, OSError, zipfile.BadZipFile) as error:
+            source_paths.append(path)
+            if source_required and not copyright_found:
+                copyright_found |= _archive_has_copyright(path)
+        except (ValueError, OSError, tarfile.TarError, zipfile.BadZipFile) as error:
             integrity.append(str(error))
     if source.get("recipe") is not None:
         try:
             assets.append(("recipe", _asset(source["recipe"], base, hashed=True)))
         except (ValueError, OSError) as error:
             integrity.append(str(error))
-    elif gnu_required:
-        obligations.append("GPL/LGPL exact build recipe/configuration missing")
+    elif gnu_required or scoped_source_required:
+        obligations.append("GNU/scoped-source exact build recipe/configuration missing")
     build_materials = []
     for field in ("build_materials", "recipe_ancillary_files"):
         values = source.get(field, [])
@@ -345,14 +451,55 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
             assets.append(("build-material", _asset(value, base, hashed=True)))
         except (ValueError, OSError) as error:
             integrity.append(str(error))
+    covered_scripts = source.get("covered_build_scripts", [])
+    if not isinstance(covered_scripts, list):
+        raise ValueError("source.covered_build_scripts must be a list")
+    for value in covered_scripts:
+        try:
+            assets.append(("build-material", _asset(value, base, hashed=True)))
+        except (ValueError, OSError) as error:
+            integrity.append(str(error))
+    if mpl11_required and source.get("recipe") is None and not covered_scripts:
+        obligations.append("MPL-1.1 covered build/install scripts missing from recipe or covered_build_scripts")
+    availability = ""
+    if source.get("availability_notice") is not None:
+        try:
+            path = _asset(source["availability_notice"], base, hashed=True)
+            availability = path.read_text(encoding="utf-8")
+            assets.append(("source-availability-notice", path))
+        except (ValueError, OSError, UnicodeError) as error:
+            integrity.append(str(error))
+    if (mpl_required or standard_version_required) and (
+        not re.search(r"\bsource(?:\s+code)?\b", availability, re.IGNORECASE)
+        or not re.search(r"\bobtain\b|\bextract\b|\bsupplied\b|\bavailable\b", availability, re.IGNORECASE)
+        or (mpl_required and not re.search(r"Mozilla Public License|\bMPL-(?:1\.1|2\.0)\b", availability, re.IGNORECASE))
+        or (standard_version_required and not re.search(r"\bStandard Version\b|\bArtistic-1\.0\b", availability, re.IGNORECASE))
+        or not source_paths
+        or not ("NOTICE.txt" in availability or all(path.name in availability for path in source_paths))
+    ):
+        obligations.append("MPL/Artistic recipient source-availability notice must identify the applicable source/grant and delivered archives or NOTICE.txt")
+    if not notice_paths and not copyright_found:
+        obligations.append("exact package license/copyright notices missing; standard SPDX text is insufficient")
+    declared_grants = [component for expression in licenses for component in re.split(r"\s+AND\s+", expression)]
+    if any(grant in _PUBLIC_DOMAIN_IDS for grant in declared_grants) and not public_domain_found:
+        obligations.append("public-domain declaration requires genuine software dedication/release notice")
+    attribution_optional = bool(declared_grants) and all(
+        (grant in _PUBLIC_DOMAIN_IDS and public_domain_found) or scoped_optional_credit.get(grant, False)
+        for grant in declared_grants
+    )
+    if not copyright_found and not attribution_optional:
+        obligations.append("project authorship or upstream copyright notice not established in delivered notices/source headers")
+    if not license_found:
+        obligations.append("exact package license terms not established in supplied notices")
     for field in ("missing_inputs", "evidence_gaps", "unresolved_public_obligations", "redistribution_obligations"):
         obligations.extend(_strings(entry.get(field), field))
     if integrity or (strict and obligations):
         raise ValueError("; ".join(integrity + obligations))
     source_record = {
         "url": url, "immutable_origin": pinned,
-        "correspondence": "attested" if pinned and corresponding and not missing and not obligations and source.get("correspondence_attested") is not False else "unverified",
+        "correspondence": "attested" if source_paths and corresponding and not missing and not obligations and source.get("correspondence_attested") is not False else "unverified",
         "corresponding_to": sorted(set(corresponding)),
+        "provenance_diagnostics": list(dict.fromkeys(diagnostics)),
     }
     if source.get("revision"):
         source_record["revision"] = source["revision"]
@@ -381,6 +528,10 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool) -> tupl
         f"Immutable origin established: {pinned}\n"
         f"Source correspondence: {source_record['correspondence']} (provenance attestation, not a reproducible-build verification)\n"
     )
+    if diagnostics:
+        notice += "Nonblocking provenance limitations:\n" + "".join("- " + item + "\n" for item in source_record["provenance_diagnostics"])
+    if availability:
+        notice += "Recipient source availability:\n" + availability + "\n"
     if obligations:
         notice += "Not established as complete for public redistribution. Remaining obligations:\n" + "".join("- " + item + "\n" for item in record["redistribution_obligations"])
     else:
@@ -406,8 +557,11 @@ def _resolve_project(entry: dict, members: list[dict], base: Path, strict: bool)
     canonical = _gnu_licenses([grant["license"]])[0][1]
     if _sha256(path) != _sha256(canonical):
         raise ValueError("project license grant text does not match genuine GNU GPLv3 terms")
-    licensed = dict(entry, licenses=[grant["license"]], notices=[grant["text"]], origin="newly authored native project implementation")
-    record, assets, body = _resolve(licensed, members, base, strict)
+    supplied_notices = entry.get("notices", [])
+    if not isinstance(supplied_notices, list):
+        raise ValueError("project notices must be a list of exact notice file paths")
+    licensed = dict(entry, licenses=[grant["license"]], notices=[*supplied_notices, grant["text"]], origin="newly authored native project implementation")
+    record, assets, body = _resolve(licensed, members, base, strict, project_notice=notice)
     record["source"]["kind"] = "licensed-project-source"
     return record, assets, notice + "\nLicense grant scope: newly authored native implementation only; original assets and third-party material retain their own terms.\n" + body
 
@@ -445,9 +599,11 @@ def _check_elf_identity(source: Path, digest: str, pins: dict[Path, str]) -> Non
 def bundle_licenses(elf_records: list[dict], provenance_path: Path, licenses_dir: Path, *, strict: bool = True) -> list[dict]:
     """Bundle genuine available materials and aggregate unresolved obligations.
 
-    strict=True rejects incomplete public redistribution provenance. Local
-    strict=False records redistribution_obligations without inventing rights.
-    Invalid identities, selectors, claimed files and hashes remain fatal.
+    strict=True rejects missing license-scoped delivery duties, not optional
+    scientific provenance limitations or a false copyright inventory attestation.
+    Local strict=False records missing duties without inventing rights. Neither
+    mode establishes legal clearance. Invalid identities, selectors, claimed
+    files, hashes, URLs/revisions and ELF mappings remain fatal.
     Returned paths are relative to an absent/empty licenses_dir.
     """
     provenance_path = provenance_path.resolve(strict=True)
@@ -561,7 +717,7 @@ def bundle_licenses(elf_records: list[dict], provenance_path: Path, licenses_dir
         except (ValueError, OSError) as error:
             failures.append(f"{package} {version}: {error}")
     if failures:
-        raise ValueError("Unresolved bundled package obligations:\n- " + "\n- ".join(failures) + "\nSupply exact notices/copyrights and version-pinned source provenance; GNU packages also need hash-verified corresponding archives and build recipe/configuration.")
+        raise ValueError("Unresolved bundled package obligations:\n- " + "\n- ".join(failures) + "\nSupply exact applicable notices and resolve license/component scope; GNU/MPL source duties require hash-verified mapped archives, GNU build materials and MPL recipient source directions.")
     licenses_dir = licenses_dir.absolute()
     if licenses_dir.exists() and (not licenses_dir.is_dir() or any(licenses_dir.iterdir())):
         raise ValueError("license output must be absent or empty: " + str(licenses_dir))
@@ -688,5 +844,180 @@ def _check_mapping_and_invalid_manifest() -> None:
                 raise AssertionError("original binary identity pin mismatch accepted")
 
 
+def _check_conditional_delivery() -> None:
+    """Exercise the policy consumer with real, temporary delivered materials."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        binary = root / "libconditional.so"
+        binary.write_bytes(b"conditional boundary fixture")
+        digest = _sha256(binary)
+        elf = [{"source": str(binary.resolve()), "packaged": "usr/lib/libconditional.so", "sha256": digest}]
+        notice = root / "NOTICE"
+        notice.write_text("Copyright 2026 Conditional fixture author.\nPermission is hereby granted to use this fixture under its declared license.\n", encoding="utf-8")
+        code = root / "fixture.c"
+        code.write_text("/* Copyright 2026 Conditional fixture author. */\nint fixture(void) { return 1; }\n", encoding="utf-8")
+        archive = root / "covered.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            stream.add(code, arcname=code.name)
+        recipe = root / "build.sh"
+        recipe.write_text("cc -shared fixture.c -o libconditional.so\n", encoding="utf-8")
+        directions = root / "SOURCE-NOTICE"
+        directions.write_text("MPL-2.0 Covered Software source code is supplied in covered.tar.gz, listed in this package's NOTICE.txt. Extract it to obtain the source under the Mozilla Public License.\n", encoding="utf-8")
+        hashed = lambda path: {"path": path.name, "sha256": _sha256(path)}
+        entry = {"files": [binary.name], "package": "conditional-fixture", "version": "1.0", "licenses": ["MIT"], "origin": "temporary policy fixture", "notices": [hashed(notice)], "copyright_complete": False}
+        complete_source = {"archives": [hashed(archive)], "corresponding_to": [digest], "recipe": hashed(recipe)}
+        count = 0
+
+        def deliver(value: dict, accepted: bool = True, *, strict: bool = True, project: dict | None = None) -> list[dict]:
+            nonlocal count
+            count += 1
+            manifest = root / "provenance.json"
+            manifest.write_text(json.dumps({"version": 1, "packages": [value] if project is None else [], "project_author": project or {}}), encoding="utf-8")
+            target = root / f"delivered-{count}"
+            records = None
+            try:
+                records = bundle_licenses(elf, manifest, target, strict=strict)
+            except ValueError:
+                if accepted:
+                    raise
+                assert not target.exists(), "Rejected delivery left a recipient bundle"
+            else:
+                assert accepted, "Incomplete or invalid claimed delivery was accepted"
+                assert records and all((target / item["file"]).is_file() for item in records[0]["files"])
+            return records or []
+
+        for license_id in ("MIT", "BSD-2-Clause", "BSD-3-Clause-Clear", "Unicode-3.0", "Apache-2.0", "Zlib"):
+            records = deliver({**entry, "licenses": [license_id]})
+            assert not records[0]["copyright_complete"] and not records[0]["redistribution_obligations"]
+            assert not records[0]["source"]["immutable_origin"]
+        optional = {**entry, "source": {"url": "https://example.org/homepage", "correspondence_attested": False}}
+        records = deliver(optional)
+        assert records[0]["source"]["correspondence"] == "unverified"
+        assert records[0]["source"]["provenance_diagnostics"]
+        deliver({**entry, "notices": []}, False)
+        for strict in (False, True):
+            for update in (
+                {"notices": [{"path": notice.name, "sha256": "0" * 64}]},
+                {"notices": ["missing-notice"]},
+                {"notices": "not-a-list"},
+                {"source": {"url": "file:///source"}},
+                {"source": {"url": ""}},
+                {"source": {"url": "https://example.org/1.0", "revision": "bad"}},
+                {"source": {"url": "https://example.org/1.0", "revision": None}},
+                {"source": {"url": "https://example.org:not-a-port/1.0"}},
+                {"source": {"url": "https://example.org/1.0 bad"}},
+                {"source": {"corresponding_to": ["0" * 64]}},
+                {"source": {"corresponding_to": [digest, "0" * 64]}},
+                {"source": {"corresponding_to": "not-a-list"}},
+                {"source": {"archives": [{"path": archive.name, "sha256": "0" * 64}]}},
+                {"source": {"archives": "not-a-list"}},
+                {"source": {"recipe": {"path": "missing-recipe", "sha256": "0" * 64}}},
+            ):
+                deliver({**entry, **update}, False, strict=strict)
+        for licenses in (["MIT OR GPL-2.0-only"], ["MIT WITH unknown-exception"], ["custom"], ["LicenseRef-Unknown"]):
+            deliver({**entry, "licenses": licenses}, False)
+        scoped = {**entry, "licenses": ["LicenseRef-Fixture"], "license_scopes": [{"license": "LicenseRef-Fixture", "scope": "the included fixture.c component", "delivery": "notice-only", "terms": hashed(notice)}]}
+        deliver(scoped)
+        imperative = root / "IMPERATIVE-GRANT"
+        imperative.write_text("/*\n * Distribute and use freely; there are no restrictions on further\n * dissemination and usage except those imposed by the laws of your\n * country of residence.\n */\n", encoding="utf-8")
+        deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(imperative)}]})
+        tcl_grant = root / "TCL-GRANT"
+        tcl_grant.write_text("The authors hereby grant permission to use, copy, modify,\n * distribute, and license this software and its documentation for any purpose, provided that existing copyright notices are retained in all copies and that this notice is included verbatim in any distributions.\n", encoding="utf-8")
+        deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(tcl_grant)}]})
+        patent_grant = root / "PATENT-GRANT"
+        patent_grant.write_text("Google hereby grants to you a perpetual, worldwide, non-exclusive,\nno-charge, irrevocable (except as stated in this section) patent\nlicense to make, have made, use, offer to sell, sell, import,\ntransfer, and otherwise run, modify and propagate the contents of this implementation.\n", encoding="utf-8")
+        deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(patent_grant)}]})
+        wrapped_gnu = root / "WRAPPED-GNU-GRANT"
+        wrapped_gnu.write_text("/*\n * This component is free software; you can redistribute it\n * under the GNU General Public\n * License, version 3.\n */\n", encoding="utf-8")
+        for strict in (False, True):
+            deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(wrapped_gnu)}]}, False, strict=strict)
+        for strict in (False, True):
+            deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": {"path": imperative.name, "sha256": "0" * 64}}]}, False, strict=strict)
+        deliver({**scoped, "notices": []})
+        deliver({**scoped, "license_scopes": [*scoped["license_scopes"], {**scoped["license_scopes"][0], "scope": "a second distinct included component sharing the original custom label"}]})
+        for strict in (False, True):
+            for scope in (
+                {**scoped["license_scopes"][0], "terms": {"path": notice.name, "sha256": "0" * 64}},
+                {**scoped["license_scopes"][0], "terms": {"path": "missing-terms", "sha256": "0" * 64}},
+                {**scoped["license_scopes"][0], "scope": ""},
+                {**scoped["license_scopes"][0], "license": "LicenseRef-Unselected"},
+                {**scoped["license_scopes"][0], "delivery": "waive-everything"},
+            ):
+                deliver({**scoped, "license_scopes": [scope]}, False, strict=strict)
+            deliver({**entry, "licenses": ["GPL-3.0-only"], "license_scopes": [{**scoped["license_scopes"][0], "license": "GPL-3.0-only"}]}, False, strict=strict)
+        pd = root / "PUBLIC-DOMAIN"
+        pd.write_text("This fixture software is now in the public domain.\n", encoding="utf-8")
+        deliver({**entry, "licenses": ["LicenseRef-PublicDomain"], "notices": [hashed(pd)]})
+        deliver({**entry, "licenses": ["LicenseRef-PublicDomain"], "notices": [hashed(notice)]}, False)
+        optional_credit = root / "OPTIONAL-CREDIT"
+        optional_credit.write_text("By Conditional fixture author (2026).\nUse this source code in any fashion you see fit. Giving me credit where credit is due is optional.\n", encoding="utf-8")
+        optional_scope = {"license": "LicenseRef-OptionalCredit", "scope": "included fixture source with explicit optional attribution", "delivery": "notice-only", "terms": hashed(optional_credit)}
+        optional_grant = {**entry, "licenses": ["LicenseRef-PublicDomain", optional_scope["license"]], "notices": [hashed(pd)], "license_scopes": [optional_scope]}
+        deliver(optional_grant)
+        deliver({**optional_grant, "licenses": [optional_scope["license"]], "notices": []})
+        deliver({**optional_grant, "licenses": [*optional_grant["licenses"], "MIT"]}, False)
+        mandatory_credit = root / "MANDATORY-CREDIT"
+        mandatory_credit.write_text("Permission is hereby granted, provided copyright notice is retained.\n", encoding="utf-8")
+        deliver({**optional_grant, "license_scopes": [optional_scope, {**optional_scope, "scope": "separate included fixture with mandatory retained notices", "terms": hashed(mandatory_credit)}]}, False)
+        deliver({**entry, "licenses": ["MIT"], "notices": [hashed(pd)]}, False)
+        scoped_source = {**scoped, "license_scopes": [{**scoped["license_scopes"][0], "delivery": "source-required"}], "source": complete_source}
+        deliver(scoped_source)
+        for missing in ("archives", "corresponding_to", "recipe"):
+            deliver({**scoped_source, "source": {key: value for key, value in complete_source.items() if key != missing}}, False)
+        grantless = root / "grantless.txt"
+        grantless.write_text("An inventory of component filenames, without any grant.\n", encoding="utf-8")
+        for strict in (False, True):
+            deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(grantless)}]}, False, strict=strict)
+        standard_notice = root / "STANDARD-VERSION"
+        standard_notice.write_text("Artistic-1.0 Standard Version source code is supplied in covered.tar.gz. Extract it to obtain the Standard Version.\n", encoding="utf-8")
+        standard = {**entry, "licenses": ["Artistic-1.0"], "license_scopes": [{"license": "Artistic-1.0", "scope": "included unmodified fixture, executable distribution under section 4(a)", "delivery": "standard-version", "terms": hashed(notice)}], "source": {"archives": [hashed(archive)], "availability_notice": hashed(standard_notice), "correspondence_attested": False}}
+        records = deliver(standard)
+        assert records[0]["source"]["correspondence"] == "unverified"
+        for missing in ("archives", "availability_notice"):
+            deliver({**standard, "source": {key: value for key, value in standard["source"].items() if key != missing}}, False)
+        for missing in ("archives", "corresponding_to", "recipe"):
+            deliver({**entry, "licenses": ["GPL-3.0-only"], "source": {key: value for key, value in complete_source.items() if key != missing}}, False)
+        gnu = {**entry, "licenses": ["GPL-3.0-only"], "source": complete_source}
+        records = deliver(gnu)
+        assert not records[0]["source"]["immutable_origin"] and not records[0]["copyright_complete"]
+        assert records[0]["source"]["correspondence"] == "attested"
+        for grant in ("GPL-3.0-only WITH GCC-exception-3.1", "GPL-2.0-or-later WITH Linux-syscall-note"):
+            deliver({**gnu, "licenses": [grant]})
+            deliver({**entry, "licenses": [grant]}, False)
+        deliver({**entry, "licenses": ["Apache-2.0 WITH LLVM-exception AND BSD-3-Clause"]})
+        deliver({**gnu, "source": {**complete_source, "correspondence_attested": False}}, False)
+        # Original source headers can supply copyright without a duplicate inventory.
+        grant_path = _gnu_licenses(["GPL-3.0-only"])[0][1]
+        deliver({**gnu, "notices": [str(grant_path)]})
+        mpl_source = {key: value for key, value in complete_source.items() if key != "recipe"}
+        mpl_source["availability_notice"] = hashed(directions)
+        mpl = {**entry, "licenses": ["MPL-2.0"], "source": mpl_source}
+        deliver({**mpl, "source": {"url": "https://example.org/source-1.0.tar.gz"}}, False)
+        for missing in ("archives", "corresponding_to", "availability_notice"):
+            deliver({**mpl, "source": {key: value for key, value in mpl_source.items() if key != missing}}, False)
+        deliver(mpl)
+        deliver({**mpl, "source": {**mpl_source, "availability_notice": hashed(notice)}}, False)
+        for strict in (False, True):
+            deliver({**mpl, "source": {**mpl_source, "availability_notice": {"path": directions.name, "sha256": "0" * 64}}}, False, strict=strict)
+        directions.write_text("MPL-1.1 Covered Software source code is supplied in covered.tar.gz. Extract it to obtain the source under the Mozilla Public License.\n", encoding="utf-8")
+        mpl11 = {**mpl, "licenses": ["MPL-1.1"], "source": {**mpl_source, "availability_notice": hashed(directions)}}
+        deliver(mpl11, False)
+        deliver({**mpl11, "source": {**mpl11["source"], "covered_build_scripts": [hashed(recipe)]}})
+        for field in ("missing_inputs", "evidence_gaps", "unresolved_public_obligations", "redistribution_obligations"):
+            deliver({**entry, field: ["genuine unresolved duty"]}, False)
+        native = root / "pusu-game"
+        native.write_bytes(binary.read_bytes())
+        elf[0].update(source=str(native.resolve()), packaged="usr/bin/pusu-game")
+        license_path = root / "GPL"
+        license_path.write_bytes(grant_path.read_bytes())
+        project = {"executables": ["usr/bin/pusu-game"], "package": "pusu-native", "version": "1.0", "notice": "Newly authored native implementation by the project author; original assets and third-party material excluded.", "notices": [hashed(notice)], "copyright_complete": False, "source": complete_source, "license_grant": {"license": "GPL-3.0-only", "scope": "newly-authored-native-implementation", "text": hashed(license_path)}}
+        records = deliver({}, project=project)
+        assert records[0]["source"]["kind"] == "licensed-project-source"
+        assert records[0]["supplied_provenance"]["notices"] == [hashed(notice), hashed(license_path)]
+        # Project-specific human attribution needs no invented upstream author.
+        deliver({}, project={**project, "notices": []})
+
+
 if __name__ == "__main__":
     _check_mapping_and_invalid_manifest()
+    _check_conditional_delivery()

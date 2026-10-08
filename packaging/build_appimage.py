@@ -4,17 +4,20 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import struct
 import subprocess
 import tempfile
+import tarfile
 
-from license_bundle import bundle_licenses
+from license_bundle import _asset, bundle_licenses
 
 HERE = Path(__file__).resolve().parent
 BINARIES = ("pusu-installer", "pusu-game", "pusu-launcher")
+SOURCE_PART_MAX_BYTES = 1_900_000_000
+SOURCE_KINDS = {"source", "recipe", "build-material"}
 # Keep the host dynamic loader, libc ABI and hardware-specific driver stack together.
 HOST_LIBRARIES = re.compile(
     r"^(?:ld-linux.*|lib(?:c|m|mvec|BrokenLocale|c_malloc_debug|thread_db|dl|pthread|rt|resolv|util|anl|nss_[^.]+)\.so(?:\..*)?"
@@ -191,6 +194,148 @@ def package_schemas(appdir):
     return records
 
 
+def build_source_companions(appdir, records, staging, prefix, *, max_bytes=SOURCE_PART_MAX_BYTES):
+    """Move validated delivered materials into self-contained, size-bounded tars."""
+    licenses = appdir / "usr/share/licenses"
+    groups = {}
+    paths = set()
+    for record in records:
+        for item in record["files"]:
+            if item["kind"] not in SOURCE_KINDS:
+                continue
+            relative = PurePosixPath(item["file"])
+            if (relative.is_absolute() or len(relative.parts) < 3 or relative.parts[1] != "source"
+                    or ".." in relative.parts or relative.as_posix() != item["file"]):
+                raise ValueError(f"Unsafe delivered source path: {item['file']}")
+            source = licenses / item["file"]
+            source.resolve(strict=True).relative_to(licenses.resolve())
+            if source.is_symlink() or not source.is_file() or digest(source) != item["sha256"]:
+                raise ValueError(f"Delivered source missing or hash mismatch: {source}")
+            member = "usr/share/licenses/" + item["file"]
+            if member in paths:
+                raise ValueError(f"Duplicate delivered source path: {member}")
+            paths.add(member)
+            info = tarfile.TarInfo(member)
+            info.size = source.stat().st_size
+            info.mode = source.stat().st_mode & 0o777
+            group = groups.setdefault(item["sha256"], [])
+            if group:
+                info.type = tarfile.LNKTYPE
+                info.linkname = group[0][2].name
+                info.size = 0
+            group.append((item, source, info))
+
+    # Include PAX/long-name headers, end markers and tarfile's record padding.
+    def archive_size(payload):
+        return ((payload + 1024 + tarfile.RECORDSIZE - 1) // tarfile.RECORDSIZE) * tarfile.RECORDSIZE
+
+    parts = []
+    current = []
+    payload = 0
+    for group in groups.values():
+        cost = sum(len(info.tobuf(format=tarfile.PAX_FORMAT))
+                   + ((info.size + 511) // 512) * 512 for _, _, info in group)
+        if archive_size(cost) >= max_bytes:
+            raise ValueError(f"Source material and its aliases exceed companion limit: {group[0][1]}")
+        if current and archive_size(payload + cost) >= max_bytes:
+            parts.append(current)
+            current = []
+            payload = 0
+        current.append(group)
+        payload += cost
+    if current:
+        parts.append(current)
+    filenames = [f"{prefix.name}-{index:03d}.tar" for index in range(1, len(parts) + 1)]
+    for filename in filenames:
+        target = prefix.parent / filename
+        if target.exists() or target.is_symlink():
+            raise ValueError(f"Refusing to overwrite existing source companion: {target}")
+
+    companions = []
+    for filename, part in zip(filenames, parts):
+        path = staging / filename
+        with tarfile.open(path, "x", format=tarfile.PAX_FORMAT) as archive:
+            for group in part:
+                for _, source, info in group:
+                    if info.islnk():
+                        archive.addfile(info)
+                    else:
+                        with source.open("rb") as stream:
+                            archive.addfile(info, stream)
+        size = path.stat().st_size
+        if size >= max_bytes:
+            raise ValueError(f"Source companion exceeds byte limit: {path} ({size})")
+        # Verify the bytes actually archived, not only the earlier staged input.
+        with tarfile.open(path, "r:") as archive:
+            for group in part:
+                with archive.extractfile(group[0][2].name) as stream:
+                    checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+                if checksum != group[0][0]["sha256"]:
+                    raise ValueError(f"Source changed during companion creation: {group[0][1]}")
+        companions.append({"file": filename, "sha256": digest(path), "size": size})
+        for group in part:
+            for item, _, info in group:
+                item["location"] = {"kind": "source-companion", "file": filename, "member": info.name}
+
+    # Only after all archives succeed may source payloads leave the AppDir.
+    for record in records:
+        materials = [item for item in record["files"] if item["kind"] in SOURCE_KINDS]
+        if not materials:
+            continue
+        notice = licenses / record["notice"]["file"]
+        text = notice.read_text(encoding="utf-8")
+        for item in materials:
+            old = f"{item['kind']}: {item['file']}  SHA256 {item['sha256']}\n"
+            location = item["location"]
+            text = text.replace(old, f"{item['kind']} companion member: {location['member']}  "
+                                f"archive {location['file']}  SHA256 {item['sha256']}\n")
+        text += ("\nSource delivery: the source, recipes and build/relink materials listed above "
+                 "are not embedded in this AppImage. Obtain ALL numbered source companions "
+                 "beside this exact AppImage from the same download location, with equivalent "
+                 "access and no additional charge. Companion SHA256 and byte sizes follow.\n")
+        for companion in companions:
+            text += f"{companion['file']}  SHA256 {companion['sha256']}  bytes {companion['size']}\n"
+        text += ("Check each companion with sha256sum, then extract every part into the same "
+                 "empty directory using tar -xf <companion-file>. Each part is independently "
+                 "extractable; materials appear at the usr/share/licenses/... member paths above. "
+                 "Then unpack the original source archives there and use the supplied recipes/"
+                 "build/relink materials. Existing MPL/other source-availability notices refer "
+                 "to this NOTICE.txt for these delivered archive locations.\n")
+        notice.write_text(text, encoding="utf-8")
+        record["notice"]["sha256"] = digest(notice)
+        record["source"]["notice"] = record["notice"]
+        record["source"]["delivery"] = "source-companions"
+        record["source"]["companions"] = companions
+    for group in groups.values():
+        for _, source, _ in group:
+            source.unlink()
+    return companions
+
+
+def publish_outputs(outputs):
+    """Publish completed assets without replacing existing or racing user files."""
+    for _, target in outputs:
+        if target.exists() or target.is_symlink():
+            raise ValueError(f"Refusing to overwrite existing output: {target}")
+    published = []
+    try:
+        for source, target in outputs:
+            identity = source.stat()
+            os.link(source, target)
+            published.append((target, identity.st_dev, identity.st_ino))
+    except OSError:
+        for target, device, inode in reversed(published):
+            try:
+                identity = target.lstat()
+                if (identity.st_dev, identity.st_ino) == (device, inode):
+                    target.unlink()
+            except FileNotFoundError:
+                pass
+        raise
+
+
+
+
 def package(args):
     patchelf = str(args.patchelf.resolve(strict=True)) if args.patchelf else tool("patchelf")
     appimagetool = tool("appimagetool")
@@ -199,9 +344,12 @@ def package(args):
     if missing:
         raise ValueError("Native binaries are not built: " + ", ".join(missing))
     output = args.output.resolve()
-    if output.exists():
+    if output.exists() or output.is_symlink():
         raise ValueError(f"Refusing to overwrite existing output: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
+    source_prefix = args.source_prefix.resolve() if args.source_prefix else None
+    if source_prefix and source_prefix.parent != output.parent:
+        raise ValueError("--source-prefix must be beside --output for same-filesystem atomic publication")
     runtime = args.runtime_file.resolve(strict=True)
     elf_arch(runtime)
     runtime_record = {"source": str(runtime), "packaged": "AppImage/runtime", "sha256": digest(runtime)}
@@ -217,7 +365,19 @@ def package(args):
         records, external = copy_closure(binaries, [path.resolve(strict=True) for path in args.library_dir], appdir, patchelf, args.module)
         notices = bundle_licenses([*records, runtime_record], args.provenance.resolve(strict=True),
                                  appdir / "usr/share/licenses", strict=args.redistributable)
+        companions = (build_source_companions(appdir, notices, Path(directory), source_prefix)
+                      if source_prefix else [])
         schemas = package_schemas(appdir)
+        thai_dictionary_hash = "aae5b3416fb308eda447f2c47678d72cb05462dbaf14517cdaeecc7358199319"
+        thai_dictionary = _asset({
+            "path": "licenses/libthai/runtime-data/usr/share/libthai/thbrk.tri",
+            "sha256": thai_dictionary_hash,
+        }, HERE, hashed=True)
+        thai_target = appdir / "usr/share/libthai/thbrk.tri"
+        thai_target.parent.mkdir(parents=True)
+        shutil.copy2(thai_dictionary, thai_target)
+        if digest(thai_target) != thai_dictionary_hash:
+            raise ValueError(f"Packaged libthai dictionary hash mismatch: {thai_target}")
         copy_art(args.art, share / "installer.png")
         copy_art(args.icon, share / "pusu.png")
         shutil.copy2(HERE / "art/NOTICE.txt", share / "art-NOTICE.txt")
@@ -234,6 +394,8 @@ def package(args):
             "libraries": records, "host_libraries": external, "packages": notices,
             "appimage_runtime": runtime_record,
             "gtk_schemas": schemas,
+            "runtime_data": [{"source": str(thai_dictionary), "packaged": str(thai_target.relative_to(appdir)),
+                              "sha256": thai_dictionary_hash}],
             "artwork": art_record, "game_assets": "Not bundled; extracted from the user's own disc image.",
             "build_tools": {
                 "patchelf": {"path": str(Path(patchelf).resolve()), "version": run(patchelf, "--version"),
@@ -241,6 +403,13 @@ def package(args):
                 "appimagetool": {"path": str(Path(appimagetool).resolve()), "sha256": digest(Path(appimagetool))},
             },
         }
+        if source_prefix:
+            manifest["source_delivery"] = {
+                "kind": "source-companions", "companions": companions,
+                "member_root": "usr/share/licenses",
+                "obtaining": "Download ALL listed companions beside this exact AppImage from the same location with equivalent access and no additional charge.",
+                "extraction": "Verify SHA256 and size, then tar -xf each companion into the same empty directory.",
+            }
         for record in records:
             record["packaged_sha256"] = digest(appdir / record["packaged"])
         (share / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -250,8 +419,11 @@ def package(args):
         subprocess.run([appimagetool, "--no-appstream", "--runtime-file", str(runtime), str(appdir), str(image)], check=True,
                        env={**os.environ, "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "CHARSET": "UTF-8",
                             "ARCH": "x86_64", "APPIMAGE_EXTRACT_AND_RUN": "1"})
-        # Atomic publication refuses a racing output instead of replacing user data.
-        os.link(image, output)
+        # Publish only after assembly; roll back only our own links on collision.
+        assets = [(Path(directory) / item["file"], output.parent / item["file"]) for item in companions]
+        publish_outputs([*assets, (image, output)])
+    for _, target in assets:
+        print(target)
     print(output)
 
 
@@ -259,6 +431,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--source-prefix", type=Path,
+                        help="Deliver all validated source/build materials as PREFIX-001.tar, PREFIX-002.tar, etc. beside --output; omit to embed them")
     parser.add_argument("--patchelf", type=Path,
                         help="Explicit verified build-time patchelf executable; avoids colon-sensitive PATH entries")
     parser.add_argument("--runtime-file", required=True, type=Path,
