@@ -16,7 +16,7 @@ The public AppImage is rebuilt separately from the older private local images. I
 - Actor death overlays use the original masked blood texture instead of a missing-resource diagnostic. Restoring an older checkpoint corrects only that specific actor-owned texture identifier; custom materials and saved color/alpha state are retained. Real engine-damage/rendering checks preserve the corpse's clothing colors in OpenGL and Vulkan; these are not full natural-combat or campaign validations.
 - Vulkan shares immutable world-index uploads and uses two fence-owned acceleration-structure scratch buffers instead of separate scratch allocations per structure. Per-structure storage remains separate. Loading services the native window during GPU preparation and between complete animation-file admissions, without consuming queued application events or disabling ray tracing.
 
-The first release's AppImage does not contain these source changes. A new binary requires its own matching source/build materials and installation verification.
+The [v0.1.1-linux release](https://github.com/sergen213/pusu-uyanis-linux/releases/tag/v0.1.1-linux) includes these fixes and its matching source/build companions. Its actual BIN/CUE GUI installation, desktop shortcuts, settings save/reload, and native OpenGL/Vulkan launches were verified. The earlier v0.1.0 AppImage does not contain the fixes; install the new version into a fresh directory to leave an existing installation untouched.
 
 ## Build requirements
 
