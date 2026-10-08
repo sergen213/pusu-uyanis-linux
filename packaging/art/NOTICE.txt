@@ -1,0 +1,13 @@
+Pusu: Uyanış original artwork
+
+The artwork in this directory is derived only from the original Pusu media
+identified by the source paths and SHA-256 checksums in provenance.json.
+The project user explicitly approved use of original game artwork for the
+native installer and launcher. Original artwork remains subject to its
+original rights holders' rights; this notice does not claim a new public
+licence or grant rights to distribute the rest of the game.
+
+The AppImage includes only the named installer illustration and application
+icon, not the original game's asset library. Other assets must be imported
+from the user's own original disc image. The native implementation's authorship
+and third-party library licence/source notices are recorded separately.

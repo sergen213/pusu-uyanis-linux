@@ -1,0 +1,40 @@
+# Deny by default; only reviewed source and required UI inputs enter Git.
+*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/CMakeLists.txt
+
+!/src/
+!/src/**/
+!/src/**/*.cpp
+!/src/**/*.hpp
+!/src/shaders/vulkan/*.vert
+!/src/shaders/vulkan/*.frag
+!/src/shaders/vulkan/*.glsl
+
+!/checks/
+!/checks/*.cpp
+!/checks/game_cli.py
+
+!/cmake/
+!/cmake/embed_spirv.cmake
+
+!/packaging/
+!/packaging/build_appimage.py
+!/packaging/license_bundle.py
+!/packaging/check_packaging.py
+!/packaging/pusu.desktop
+!/packaging/art/
+!/packaging/art/installer.png
+!/packaging/art/pusu.png
+!/packaging/art/NOTICE.txt
+!/packaging/art/provenance.json
+
+# Never admit private work, caches or compiled Python, even inside source trees.
+**/.work/
+**/.cache/
+**/__pycache__/
+*.py[cod]
+# packaging/provenance.json, licenses/ and sources/ intentionally stay private:
+# machine-specific build evidence and bulk upstream compliance material.

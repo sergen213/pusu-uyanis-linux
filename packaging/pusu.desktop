@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Pusu: Uyanış — Native Setup
+Name[tr]=Pusu: Uyanış — Yerel Kurulum
+Comment=Install your own Pusu disc image and configure the native game
+Comment[tr]=Pusu disk görüntünüzü yükleyin ve yerel oyunu yapılandırın
+Exec=AppRun
+Icon=pusu
+Terminal=false
+Categories=Game;ActionGame;
+StartupNotify=true

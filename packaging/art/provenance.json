@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "rights_notice": "art-NOTICE.txt",
+  "installer": {
+    "file": "installer.png",
+    "sha256": "572fadfb37b38aba66d165d8779267ac0bd94ee1d4e883ce22c6ae040f968571",
+    "source": "Original Pusu disc MSI File records _CAB03FFC7FD94474B4DB9319F3536DC4 (Sequence 7885) and _739D3BA94DCD4C06B6791A57ECB156D2 (Sequence 7886), external Data1.cab",
+    "source_files": [
+      {"path": "textures/3te_interface/menu_background.tga", "sha256": "13bc4315d753412990d7c65f96493f311f3e0ed90bdc5df998a737c17951e916"},
+      {"path": "textures/3te_interface/menu_background_pusu.tga", "sha256": "c05d40c4eaabf1e53181254102b84c95e0139564bdf665c533e39d1c4eca1536"}
+    ],
+    "transformation": "Pillow PNG conversion: original background texture scaled from 1024x1024 to authored 1024x768 logical control size; original transparent logo scaled from 256x256 to authored width 329 and height 213, composited at (0,120). LANCZOS resampling. No generated replacement artwork.",
+    "composition_evidence": "Original interface/menu_ana_sayfa.txt controls frame_background and frame_background_pusu; this illustration contains these two original layers, not a claim of the complete original menu composition.",
+    "permission": "Project user explicitly approved original Pusu artwork for native installer/launcher; original rights retained, no public sublicensing claim.",
+    "dimensions": [1024, 768]
+  },
+  "icon": {
+    "file": "pusu.png",
+    "sha256": "f015de855d125b7dee16331f8fc8409ca2eb13b3f7bb7f1be312523bd4aab047",
+    "source": "Original Pusu disc textures/3te_interface/menu_background_pusu.tga; MSI File _739D3BA94DCD4C06B6791A57ECB156D2, Sequence 7886, external Data1.cab",
+    "source_sha256": "c05d40c4eaabf1e53181254102b84c95e0139564bdf665c533e39d1c4eca1536",
+    "transformation": "Lossless RGBA TGA-to-PNG conversion with Pillow; original 256x256 dimensions and alpha preserved.",
+    "permission": "Project user explicitly approved original Pusu artwork for native installer/launcher; original rights retained, no public sublicensing claim.",
+    "dimensions": [256, 256]
+  }
+}
