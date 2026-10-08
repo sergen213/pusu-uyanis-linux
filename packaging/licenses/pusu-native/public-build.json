@@ -1,9 +1,9 @@
 {
   "package": "pusu-native",
   "source_repository": "https://github.com/sergen213/pusu-uyanis-linux",
-  "source_revision": "4b306c28b328dc69d2abcf1fab8909020bee9acf",
-  "source_archive": "sources/pusu-native-4b306c2.tar.gz",
-  "source_sha256": "19c9858c2f09866cb2385e256c946251d9eaef823011bbfec8ef72dfe54d1ae0",
+  "source_revision": "16789e72aa4fe8e93d1b5725e917f068717534bc",
+  "source_archive": "sources/pusu-native-16789e7.tar.gz",
+  "source_sha256": "5d632c498b144d2a789381b9380da8d73d10b81d448760fd2e723a255190dcdf",
   "license_scope": "Newly authored native code GPL-3.0-only; original game artwork/retail fixtures and upstream components retain separate rights.",
   "configure": [
     "cmake",
@@ -36,6 +36,9 @@
   "linker_extra_flags": "",
   "shader_generation": "CMake builds six SPIR-V modules from the supplied GLSL sources using glslang; cmake/embed_spirv.cmake embeds them into the native executable.",
   "runtime_rpath": "$ORIGIN/../lib",
+  "observed_source_root": ".work/github-publication/bugfix-native-source/source/pusu-native",
+  "observed_build_root": ".work/github-publication/bugfix-native-source/build-ninja",
+  "observed_msi_root": ".work/disc/tools/usr",
   "observed_results": {
     "native_build": "passed",
     "registered_checks": "9/9 passed",
@@ -45,7 +48,7 @@
   "observed_original_ELF_sha256": {
     "pusu-installer": "38c870ce7eb39775430a518b6e642d39b95baf7b3a5c46b551ba6f8c2daed57d",
     "pusu-launcher": "e18680aad73ffb40dac148cdd644e42e92cd4e813f0466c32ec3aaeb08c76dee",
-    "pusu-game": "fb08ebe3dcc76da69e7902e51ca30a769d00ff16d121ca8bd362cadebb0b6dee"
+    "pusu-game": "34e6553d7c7fd86f87455ca12cb053be72829538f3d79b1e552556dae02f9f5f"
   },
   "source_build_dependencies": "Authoritative CMake/pkg-config identifiers and development-prefix layout are documented in the source README. Game media is not required to build; it is required for original-asset checks and gameplay.",
   "relink_rights": "GPLv3 recipients may modify and rebuild the native implementation. Third-party LGPL libraries are dynamically linked and remain subject to their own applicable terms.",

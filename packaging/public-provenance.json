@@ -90743,7 +90743,7 @@
   ],
   "project_author": {
     "package": "pusu-native",
-    "version": "4b306c2-native-public-build",
+    "version": "16789e7-native-public-build",
     "executables": [
       "usr/bin/pusu-installer",
       "usr/bin/pusu-launcher",
@@ -90761,35 +90761,35 @@
     "licenses": [
       "GPL-3.0-only"
     ],
-    "origin": "native GPL-3.0-only implementation from published source commit 4b306c28b328dc69d2abcf1fab8909020bee9acf",
+    "origin": "native GPL-3.0-only implementation from published source commit 16789e72aa4fe8e93d1b5725e917f068717534bc",
     "source": {
-      "url": "https://github.com/sergen213/pusu-uyanis-linux/archive/4b306c28b328dc69d2abcf1fab8909020bee9acf.tar.gz",
-      "revision": "4b306c28b328dc69d2abcf1fab8909020bee9acf",
+      "url": "https://github.com/sergen213/pusu-uyanis-linux/archive/16789e72aa4fe8e93d1b5725e917f068717534bc.tar.gz",
+      "revision": "16789e72aa4fe8e93d1b5725e917f068717534bc",
       "archives": [
         {
-          "path": "sources/pusu-native-4b306c2.tar.gz",
-          "sha256": "19c9858c2f09866cb2385e256c946251d9eaef823011bbfec8ef72dfe54d1ae0"
+          "path": "sources/pusu-native-16789e7.tar.gz",
+          "sha256": "5d632c498b144d2a789381b9380da8d73d10b81d448760fd2e723a255190dcdf"
         }
       ],
       "recipe": {
         "path": "licenses/pusu-native/public-build.json",
-        "sha256": "acf0598eb47d431a28b8ad56c111df916ecb166156b6c6948a8e1e5a167264c2"
+        "sha256": "463dad628eb5bd2c223c82408c809ca754504ab3836f8c708a00318c9245b897"
       },
       "corresponding_to": [
         "38c870ce7eb39775430a518b6e642d39b95baf7b3a5c46b551ba6f8c2daed57d",
         "e18680aad73ffb40dac148cdd644e42e92cd4e813f0466c32ec3aaeb08c76dee",
-        "fb08ebe3dcc76da69e7902e51ca30a769d00ff16d121ca8bd362cadebb0b6dee"
+        "34e6553d7c7fd86f87455ca12cb053be72829538f3d79b1e552556dae02f9f5f"
       ],
       "correspondence_attested": true,
       "attestation": {
-        "basis": "Actual build from byte-identified published source snapshot using recorded CMake/Ninja flags; parent observed all three output SHA256, 9/9 CTest, actual renderer admission and protected original interface smoke. GPL choice grants newly authored native code only; original game art/interoperability data and third-party material retain original scopes."
+        "basis": "Actual fresh build from byte-identified published source commit 16789e72aa4fe8e93d1b5725e917f068717534bc using recorded CMake/Ninja flags; parent observed all three output SHA256, 9/9 CTest, native OpenGL/Vulkan hardware-ray-query capabilities and protected original interface smoke. Native rendering/loading evidence was separately observed using byte-identical production executables. GPL choice grants newly authored native code only; original game art/interoperability data and third-party material retain original scopes."
       }
     }
   },
   "expected_elf_sha256": {
-    "../.work/github-publication/public-native-source/build-ninja/bin/pusu-installer": "38c870ce7eb39775430a518b6e642d39b95baf7b3a5c46b551ba6f8c2daed57d",
-    "../.work/github-publication/public-native-source/build-ninja/bin/pusu-launcher": "e18680aad73ffb40dac148cdd644e42e92cd4e813f0466c32ec3aaeb08c76dee",
-    "../.work/github-publication/public-native-source/build-ninja/bin/pusu-game": "fb08ebe3dcc76da69e7902e51ca30a769d00ff16d121ca8bd362cadebb0b6dee",
+    "../.work/github-publication/bugfix-native-source/build-ninja/bin/pusu-installer": "38c870ce7eb39775430a518b6e642d39b95baf7b3a5c46b551ba6f8c2daed57d",
+    "../.work/github-publication/bugfix-native-source/build-ninja/bin/pusu-launcher": "e18680aad73ffb40dac148cdd644e42e92cd4e813f0466c32ec3aaeb08c76dee",
+    "../.work/github-publication/bugfix-native-source/build-ninja/bin/pusu-game": "34e6553d7c7fd86f87455ca12cb053be72829538f3d79b1e552556dae02f9f5f",
     "../../../../usr/lib/libacl.so.1.2.2400": "01d327bda0694d3277ad39a253eb9c9673992eff93cb3a37087034949259e4e9",
     "../../../../usr/lib/libaom.so.3.15.1": "a86bdc46e54810ca61ebd72254abf57f76d179c4763027805f81b0c54bb7075c",
     "../.work/github-publication/public-runtime/runtime-x86_64": "c8bca7594fcafff54905745ba542747a9083c45eab107468aa9ac05123554a90",
@@ -90957,9 +90957,9 @@
     "../../../../usr/lib/libmd.so.0.3.0": "ce46f34300ae9a2b3b6227938e4df2fd851fa72c9f0ed6bc7e9c15c8a88c847e"
   },
   "evidence_collection": {
-    "selection": "New public native producers 4b306c28b328dc69d2abcf1fab8909020bee9acf with matched owned runtime/GCAB/GCC runtimes/D-Bus/SRT/ZeroMQ/Khronos OpenCL, retained source-closed unchanged suppliers, exact original dictionary runtime data.",
-    "producer_source_revision": "4b306c28b328dc69d2abcf1fab8909020bee9acf",
-    "producer_source_archive_sha256": "19c9858c2f09866cb2385e256c946251d9eaef823011bbfec8ef72dfe54d1ae0",
+    "selection": "New public native producers 16789e72aa4fe8e93d1b5725e917f068717534bc with matched owned runtime/GCAB/GCC runtimes/D-Bus/SRT/ZeroMQ/Khronos OpenCL, retained source-closed unchanged suppliers, exact original dictionary runtime data.",
+    "producer_source_revision": "16789e72aa4fe8e93d1b5725e917f068717534bc",
+    "producer_source_archive_sha256": "5d632c498b144d2a789381b9380da8d73d10b81d448760fd2e723a255190dcdf",
     "preserved_features": "Native original-disc import, GTK installer/settings/shortcuts, OpenGL/Vulkan/hardware ray queries, media and existing selected GUI/library features. Original game assets are not part of this binary.",
     "actual_observed_checks": [
       "new native source build and 9/9 CTest",
