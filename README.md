@@ -10,6 +10,14 @@ This is an in-development engine, not a claim of complete campaign compatibility
 
 The public AppImage is rebuilt separately from the older private local images. Its matching source/build/relink companions preserve dependency materials and recipients' applicable source/replacement rights; publishing new source does not retroactively clear an older binary or relicense original game artwork. Download the installer and all corresponding source companions from [GitHub Releases](https://github.com/sergen213/pusu-uyanis-linux/releases).
 
+### Rendering fixes since the first release
+
+- Menu glyphs keep the original font metrics and linear filtering, but sample only inside their atlas cells. This prevents separator lines bleeding into scaled OpenGL/Vulkan text.
+- Actor death overlays use the original masked blood texture instead of a missing-resource diagnostic. Restoring an older checkpoint corrects only that specific actor-owned texture identifier; custom materials and saved color/alpha state are retained. Real engine-damage/rendering checks preserve the corpse's clothing colors in OpenGL and Vulkan; these are not full natural-combat or campaign validations.
+- Vulkan shares immutable world-index uploads and uses two fence-owned acceleration-structure scratch buffers instead of separate scratch allocations per structure. Per-structure storage remains separate. Loading services the native window during GPU preparation and between complete animation-file admissions, without consuming queued application events or disabling ray tracing.
+
+The first release's AppImage does not contain these source changes. A new binary requires its own matching source/build materials and installation verification.
+
 ## Build requirements
 
 Install development headers/libraries and tools matching `CMakeLists.txt`. Distribution package names vary; the identifiers below are authoritative, not a tested cross-distro package-install recipe.

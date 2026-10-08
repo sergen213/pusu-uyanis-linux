@@ -49,10 +49,12 @@ fogDepth=abs(eyePosition.z);gl_Position=viewProjection*vec4(worldPosition,1);}
 const char* geometry_fragment=R"GLSL(#version 330 core
 in vec2 texcoord;in vec3 reflection;in vec4 vertexColor;in float fogDepth;out vec4 outputColor;
 uniform sampler2D image;uniform samplerCube cubeImage;
-uniform int rgbGen,alphaTest;uniform bool useCube,uiTint,legacyClamp;
+uniform int rgbGen,alphaTest;uniform bool useCube,uiTint,legacyClamp,fontGlyph;uniform vec4 fontBounds;
 uniform vec4 constantColor,entityColor;
 uniform vec4 fogColor;uniform vec3 fogParameters;uniform int fogMode;uniform bool fogEnabled;
-void main(){vec4 c=useCube?texture(cubeImage,reflection):texture(image,legacyClamp?clamp(texcoord,0.0,1.0):texcoord);
+void main(){vec2 coord=legacyClamp?clamp(texcoord,0.0,1.0):texcoord;
+if(fontGlyph)coord=clamp(coord,fontBounds.xy,fontBounds.zw);
+vec4 c=useCube?texture(cubeImage,reflection):texture(image,coord);
 vec3 rgb=constantColor.rgb;if(rgbGen==1)rgb=vertexColor.rgb;else if(rgbGen==3)rgb*=entityColor.rgb;
 float alpha=constantColor.a;if(rgbGen==1&&constantColor.a==1.0)alpha=vertexColor.a;
 c*=vec4(rgb,alpha*entityColor.a);if(uiTint&&rgbGen!=3)c.rgb*=entityColor.rgb;
@@ -155,6 +157,7 @@ struct Renderer::State {
     bool resources_dirty{};std::uint64_t generation{std::numeric_limits<std::uint64_t>::max()};
     GLuint geometry_program{},post_program{},screen_vao{},white{},yellow{},black{};
     std::array<GLint,UniformCount> uniforms{};
+    GLint font_glyph_uniform{},font_bounds_uniform{};
     GLint post_image{},post_bloom{},post_operation{},post_direction{},post_gamma{},post_strength{};
     GLint post_history{},post_history_layer{},post_history_alpha{};GLuint history_texture{},history_fbo{},history_depth{};int history_size{};
     std::uint8_t history_write{};std::uint32_t history_warmup{},history_order{},history_tick{};std::uint64_t effect_serial{};bool history_capture{};
@@ -169,7 +172,8 @@ struct Renderer::State {
     GLuint scene_fbo{},scene_color{},scene_depth{},resolve_fbo{},resolve_color{},blur_fbo[2]{},blur_color[2]{};
     GLuint world_vertex_buffer{};
     Names<GLuint> textures;
-    Names<GLuint> font_atlases;
+    struct FontAtlas {GLuint image{};Vec2 half_texel;};
+    Names<FontAtlas> font_atlases;
     std::unordered_map<std::string,std::array<const Material*,2>,ShaderNameHash,ShaderNameEqual> material_cache;
     std::unordered_map<const MaterialTexture*,TextureResource> sources;
     std::unordered_map<const MaterialPass*,std::vector<GLuint>> animations;
@@ -242,7 +246,10 @@ struct Renderer::State {
         textures.emplace(std::move(key),id);return id;
     }
     void preload_font(std::string_view name) {
-        if(font_atlases.find(name)==font_atlases.end())font_atlases.emplace(std::string(name),texture(name,false,false));
+        if(font_atlases.find(name)!=font_atlases.end())return;
+        const auto image=texture(name,false,false);glBindTexture(GL_TEXTURE_2D,image);
+        GLint width{},height{};glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&width);glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&height);
+        font_atlases.emplace(std::string(name),FontAtlas{image,{.5f/width,.5f/height}});
     }
     Geometry& mesh(const Mesh& mesh,std::uint64_t generation=0,std::span<const std::array<std::uint8_t,4>> colors={}) {
         auto it=meshes.find(&mesh);if(it!=meshes.end()&&it->second.generation==generation)return it->second;
@@ -263,7 +270,7 @@ struct Renderer::State {
     const Material* cached_material(std::string_view name,bool object_context=true) const;
     void world(const Level* next,LevelProgress progress=nullptr,void* context=nullptr);
     void material_draw(const Material* material,Geometry& geometry,const Matrix& model,GLuint lightmap,
-                       const std::array<float,4>& color,bool interface=false,GLuint image_override=0,std::int32_t lightmap_selector=-1,bool mesh_lighting=false,bool font_atlas=false);
+                       const std::array<float,4>& color,bool interface=false,GLuint image_override=0,std::int32_t lightmap_selector=-1,bool mesh_lighting=false,const std::array<float,4>* font_bounds=nullptr);
     TextureResource& source(const MaterialTexture& texture,const Material& material);
     void deform(const Material& material,Geometry& geometry,const Matrix& model);
     void update_video(TextureResource& resource);
@@ -281,6 +288,7 @@ Renderer::Renderer(AssetStore& assets,MaterialLibrary& materials,const Settings&
     :state_(std::make_unique<State>(assets,materials,settings)) {
     auto& s=*state_;s.geometry_program=program(geometry_vertex,geometry_fragment);s.post_program=program(fullscreen_vertex,post_fragment);
     for(std::size_t i=0;i<UniformCount;++i)s.uniforms[i]=glGetUniformLocation(s.geometry_program,uniform_names[i]);
+    s.font_glyph_uniform=glGetUniformLocation(s.geometry_program,"fontGlyph");s.font_bounds_uniform=glGetUniformLocation(s.geometry_program,"fontBounds");
     s.post_image=glGetUniformLocation(s.post_program,"image");s.post_bloom=glGetUniformLocation(s.post_program,"bloomImage");
     s.post_operation=glGetUniformLocation(s.post_program,"operation");s.post_direction=glGetUniformLocation(s.post_program,"direction");
     s.post_gamma=glGetUniformLocation(s.post_program,"gammaValue");s.post_strength=glGetUniformLocation(s.post_program,"bloomStrength");
@@ -503,7 +511,10 @@ void Renderer::State::draw_interface(std::span<const InterfaceQuad> interface,bo
         const Vec2 uv[4]{{q.uv.x,q.uv.y},{q.uv.x+q.uv.width,q.uv.y},{q.uv.x+q.uv.width,q.uv.y+q.uv.height},{q.uv.x,q.uv.y+q.uv.height}};
         for(int i=0;i<4;++i)s.quad.vertices[i].uv=uv[i];glBindBuffer(GL_ARRAY_BUFFER,s.quad.vbo);glBufferSubData(GL_ARRAY_BUFFER,0,4*sizeof(Vertex),s.quad.vertices.data());
         if(q.font_atlas){auto image=s.font_atlases.find(q.shader);if(image==s.font_atlases.end())throw std::runtime_error("Renderer.prepare required after font atlas change");
-            s.material_draw(nullptr,s.quad,model,s.white,q.color,true,image->second,-1,false,true);
+            // Linear magnification must not reach the original atlas's separator texels.
+            const auto half=image->second.half_texel;const float x=std::min(half.x,q.uv.width*.5f),y=std::min(half.y,q.uv.height*.5f);
+            const std::array<float,4> bounds{q.uv.x+x,q.uv.y+y,q.uv.x+q.uv.width-x,q.uv.y+q.uv.height-y};
+            s.material_draw(nullptr,s.quad,model,s.white,q.color,true,image->second.image,-1,false,&bounds);
         }else s.material_draw(s.cached_material(q.shader,q.shader.find("textures")!=std::string_view::npos),s.quad,model,s.white,q.color,true);
     }
     const Vec2 uv[4]{{0,0},{1,0},{1,1},{0,1}};for(int i=0;i<4;++i)s.quad.vertices[i].uv=uv[i];
@@ -642,8 +653,9 @@ TextureResource& Renderer::State::source(const MaterialTexture& input,const Mate
     return added;
 }
 void Renderer::State::material_draw(const Material* material,Geometry& geometry,const Matrix& model,GLuint lightmap,
-                                   const std::array<float,4>& color,bool interface,GLuint image_override,std::int32_t lightmap_selector,bool mesh_lighting,bool font_atlas) {
+                                   const std::array<float,4>& color,bool interface,GLuint image_override,std::int32_t lightmap_selector,bool mesh_lighting,const std::array<float,4>* font_bounds) {
     if(material&&material->passes.empty())return;glUseProgram(geometry_program);glBindVertexArray(geometry.vao);
+    const bool font_atlas=font_bounds!=nullptr;glUniform1i(font_glyph_uniform,font_atlas);if(font_atlas)glUniform4fv(font_bounds_uniform,1,font_bounds->data());
     glUniformMatrix4fv(uniforms[Model],1,GL_FALSE,model.data());glUniformMatrix4fv(uniforms[ViewProjection],1,GL_FALSE,view_projection.data());
     glUniformMatrix4fv(uniforms[View],1,GL_FALSE,interface?render_identity.data():camera.view.data());
     if(material&&std::any_of(material->passes.begin(),material->passes.end(),[](const MaterialPass& p){return p.tc_gen==MaterialTcGen::environment||p.tc_gen==MaterialTcGen::cube;})){

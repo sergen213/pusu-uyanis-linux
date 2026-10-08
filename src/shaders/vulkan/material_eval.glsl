@@ -64,6 +64,8 @@ vec4 pusu_sample_coordinates(uint pass_id,vec3 coordinates,float lod) {
         return lod<0?texture(samplerCube(cubes[nonuniformEXT(p.binding.x)],samplers[nonuniformEXT(p.binding.y)]),coordinates):textureLod(samplerCube(cubes[nonuniformEXT(p.binding.x)],samplers[nonuniformEXT(p.binding.y)]),coordinates,lod);
     }
     vec2 uv=(p.modes.z&2u)!=0u?clamp(coordinates.xy,0,1):coordinates.xy;
+    // Fonts retain authored geometry/UVs but may not filter adjacent atlas cells.
+    if((p.modes.z&64u)!=0u)uv=clamp(uv,p.parameters.xy,p.parameters.zw);
     return lod<0?texture(sampler2D(images[nonuniformEXT(p.binding.x)],samplers[nonuniformEXT(p.binding.y)]),uv):textureLod(sampler2D(images[nonuniformEXT(p.binding.x)],samplers[nonuniformEXT(p.binding.y)]),uv,lod);
 }
 vec4 pusu_sample_texture(uint instance_id,uint pass_id,PusuSurface s,vec3 view_origin,vec3 view_direction,float lod) {

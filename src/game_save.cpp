@@ -913,6 +913,62 @@ void game_save_check(Game& game) {
         const auto& members=game.leaf_entities_[leaf];
         require(std::count(members.begin(),members.end(),corpse.handle)==1);
     }
+    {
+        // Real player/bot root snapshots: repair only the old generated blood ID,
+        // not saved colors, RGB modes, custom images, or absent owned materials.
+        constexpr std::string_view old_blood="textures/3te/decal_bot_blood_01";
+        constexpr std::string_view blood_image="textures/3te_decal/bot_blood_01";
+        const auto owned=[&](std::uint32_t target)->std::optional<Material>& {
+            return game.entity(target).model.parts.front().runtime_material;
+        };
+        const auto material_bytes=[](const std::optional<Material>& material) {
+            std::ostringstream stream(std::ios::binary);SaveWriter writer{stream};
+            write_mutable_material(writer,material);return stream.str();
+        };
+        std::array<std::optional<Material>,2> expected;
+        for(std::size_t i=0;i<animation_targets.size();++i) {
+            auto& material=owned(animation_targets[i]);require(material && material->passes.size()>=3);
+            auto& passes=material->passes;auto& blood=passes[passes.size()-2];
+            require(blood.texture.kind==MaterialTextureKind::image && blood.texture.image==blood_image);
+            require(game.assets_.contains(blood.texture.image+".tga"));
+            require(blood.blend && blood.blend_source==MaterialBlendFactor::src_alpha &&
+                    blood.blend_destination==MaterialBlendFactor::one_minus_src_alpha);
+            const auto& lighting=passes.back();
+            require(lighting.blend && lighting.blend_source==MaterialBlendFactor::dst_color &&
+                    lighting.blend_destination==MaterialBlendFactor::zero);
+            blood.texture.image=old_blood;blood.color={17,29,41,173};blood.rgb_gen=MaterialRgbGen::vertex;
+            passes.front().color={37,59,83,211};passes.front().rgb_gen=MaterialRgbGen::entity;
+            passes.back().texture.image="yellowimage";passes.back().color={101,103,107,109};
+            expected[i]=material;expected[i]->passes[passes.size()-2].texture.image=blood_image;
+        }
+        const auto legacy_blood_path=cleanup.path/"legacy-actor-blood.psv";
+        game.save(legacy_blood_path);game.load(legacy_blood_path);
+        const auto preserved=[&] {
+            for(std::size_t i=0;i<animation_targets.size();++i) {
+                auto& material=owned(animation_targets[i]);
+                require(material_bytes(material)==material_bytes(expected[i]));
+                const auto& part=game.entity(animation_targets[i]).model.parts.front();
+                const auto frame=game.frame();
+                const auto draw=std::find_if(frame.objects.begin(),frame.objects.end(),[&](const auto& value) {
+                    return value.lighting_id==part.lighting_id;
+                });
+                require(draw!=frame.objects.end() && draw->material_override==&*material);
+            }
+        };
+        preserved();
+        // A genuine custom garment image in the blood slot is NOT a migration ID.
+        for(std::size_t i=0;i<animation_targets.size();++i) {
+            auto& material=owned(animation_targets[i]);auto& passes=material->passes;
+            passes[passes.size()-2].texture.image=passes.front().texture.image;
+            expected[i]=material;
+        }
+        const auto custom_blood_path=cleanup.path/"custom-actor-blood.psv";
+        game.save(custom_blood_path);game.load(custom_blood_path);preserved();
+        for(const auto target:animation_targets)owned(target).reset();
+        const auto absent_blood_path=cleanup.path/"absent-actor-material.psv";
+        game.save(absent_blood_path);game.load(absent_blood_path);
+        for(const auto target:animation_targets)require(!owned(target));
+    }
     game.load(transition_path); // Saves six bound slots, including the outgoing reset torso member.
     same_controllers(midfade_controllers);
     const auto saved_actors=actor_state();
@@ -1836,6 +1892,18 @@ void Game::read_save(std::istream& input) {
         if(snapshot && !part->runtime_material)
             part->runtime_material.emplace(materials_.construct(part->shader,0,0,true));
         apply_mutable_material(part->runtime_material,std::move(snapshot));
+    }
+    // Old native checkpoints saved the missing generated blood image ID.
+    // Correct only that appended actor-root pass; keep all script overrides.
+    for(const auto& actor:actors_.actors()) {
+        auto& parts=entities_[actor.entity-1].model.parts;
+        if(parts.empty() || !parts.front().runtime_material)continue;
+        auto& passes=parts.front().runtime_material->passes;
+        if(passes.size()<3)continue;
+        auto& blood=passes[passes.size()-2];
+        if(blood.texture.kind==MaterialTextureKind::image &&
+           blood.texture.image=="textures/3te/decal_bot_blood_01")
+            blood.texture.image="textures/3te_decal/bot_blood_01";
     }
     r.section([&](auto& stream){effects_.load(stream);});
     r.section([&](auto& stream){

@@ -54,10 +54,11 @@ struct alignas(16) GpuPass {
     std::array<std::uint32_t,4> binding{}; // image ID, sampler ID, cube flag, tcGen (0 base/1 LM/2 env/3 cube)
     std::array<std::uint32_t,4> modes{}; // RGB (0 constant/1 vertex/3 entity), alpha (0 none/1 GT0/2 LT128/3 GE128/4 EQ0), flags, source mode
     std::array<std::uint32_t,4> blend{}; // MaterialBlendFactor source/dest, depth (test bit0/write bit1/equal bit2), MaterialCull
-    std::array<float,4> parameters{}; // polygon offset, explicit ray texture LOD, reserved zero
+    std::array<float,4> parameters{}; // polygon offset/ray LOD, or font cell sample bounds when flag64
 };
 // Pass flags: UI=1, legacy UV clamp=2, fog=4, eligible RT cube=8,
 // new-light base contribution=16. Original cube-option/capture exclusion omits the draw entirely.
+// UI font-cell sample bounds=64; no world/RT pass sets this flag.
 struct alignas(16) GpuInstance {
     Matrix model{render_identity};
     std::array<float,12> normal_matrix{}; // three padded columns (inverse transpose), .w=0
@@ -153,7 +154,7 @@ struct PipelineKey {
 };
 struct PipelineRecord { PipelineKey key;VkPipeline pipeline{}; };
 struct Acceleration {
-    VkAccelerationStructureKHR handle{};Buffer storage,scratch,indices;
+    VkAccelerationStructureKHR handle{};Buffer storage,indices;
     BufferRange vertex_range;VkDeviceAddress address{};std::vector<std::uint32_t> admitted_to_original,candidate_map,candidate_indices;
     std::uint64_t topology_signature{},pose_revision{},last_submission{},vertex_signature{};
     Bounds admitted_bounds{};Matrix admission_model{render_identity};
@@ -192,6 +193,7 @@ struct VulkanRenderer::State {
     bool immediate_recording{};
     std::uint32_t frame_index{},image_index{};std::uint64_t submission_serial{},completed_serial{};
     bool recreate_pending{},acquired{},frame_rendered{},presented{},resources_dirty{},rt_supported{},rt_enabled{},preparing_level{};
+    std::uint32_t window_service_tick{};
     vk_detail::CaptureMode capture_mode{vk_detail::CaptureMode::ordinary};
     vk_detail::Target scene_target,output_target,blur_targets[2],cube_target;
     vk_detail::Target* active_target{};
@@ -218,6 +220,7 @@ struct VulkanRenderer::State {
     std::vector<vk_detail::Coverage> material_coverage;
     std::vector<vk_detail::DrawGeometry> geometry;
     std::vector<RenderVertex> world_vertices;vk_detail::Buffer world_vertex_buffer;
+    vk_detail::Buffer world_index_buffer,patch_index_buffer;
     vk_detail::Buffer interface_index_buffer,particle_triangle_index_buffer;
     std::vector<std::uint32_t> interface_geometry;
     std::vector<vk_detail::PreparedInstance> prepared_instances;
@@ -246,6 +249,7 @@ struct VulkanRenderer::State {
     std::array<std::vector<vk_detail::Acceleration>,2> blas;
     std::array<vk_detail::Acceleration,2> tlas;
     std::array<vk_detail::Buffer,2> tlas_instances;
+    std::array<vk_detail::Buffer,2> acceleration_scratch;
     std::array<std::vector<VkAccelerationStructureInstanceKHR>,2> ray_build_instances;
     vk_detail::RayCoverageStats ray_coverage;
     PFN_vkCreateAccelerationStructureKHR create_acceleration{};
@@ -263,6 +267,7 @@ struct VulkanRenderer::State {
     void resize(int,int);void apply_settings(const Settings&);void apply_original_options(const OriginalGraphicsOptions&);
     bool begin_frame();void submit_frame();bool present();void wait_idle();
     void retire_frame(vk_detail::FrameSlot&);
+    void service_window();
     VkCommandBuffer begin_commands();void finish_commands(VkCommandBuffer,bool wait);
     std::uint32_t memory_type(std::uint32_t bits,VkMemoryPropertyFlags required,VkMemoryPropertyFlags preferred=0) const;
     vk_detail::Buffer create_buffer(VkDeviceSize,VkBufferUsageFlags,VkMemoryPropertyFlags,bool address=false);

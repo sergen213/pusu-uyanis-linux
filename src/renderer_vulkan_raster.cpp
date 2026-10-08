@@ -146,6 +146,7 @@ void VulkanRenderer::State::refresh_samplers() {
 }
 void VulkanRenderer::State::destroy_raster() noexcept {
     for(auto& g:geometry){destroy_buffer(g.vertices);destroy_buffer(g.indices);}destroy_buffer(world_vertex_buffer);for(auto& i:images)destroy_image(i.image);
+    destroy_buffer(world_index_buffer);destroy_buffer(patch_index_buffer);
     destroy_buffer(interface_index_buffer);
     destroy_buffer(particle_triangle_index_buffer);
     for(auto& p:pipelines)if(p.pipeline)vkDestroyPipeline(device,p.pipeline,nullptr);pipelines.clear();for(auto& s:samplers){if(s)vkDestroySampler(device,s,nullptr);s={};}if(font_sampler)vkDestroySampler(device,font_sampler,nullptr);font_sampler={};
@@ -156,12 +157,23 @@ void VulkanRenderer::State::destroy_raster() noexcept {
 }
 void VulkanRenderer::State::upload_image(ImageResource& resource,std::span<const std::uint8_t> input,std::uint32_t components,std::uint32_t layer) {
     auto& image=resource.image;if(components!=3&&components!=4)throw std::runtime_error("Unsupported original image components");std::size_t pixels=std::size_t(image.extent.width)*image.extent.height;if(input.size()!=pixels*components||layer>=image.layers)throw std::runtime_error("Original image payload size mismatch");
+    service_window();
     auto& rgba=image_upload_pixels;rgba.resize(pixels*4);for(std::size_t k=0;k<pixels;++k){std::copy_n(input.data()+k*components,3,rgba.data()+k*4);rgba[k*4+3]=components==4?input[k*4+3]:255;}
     if(resource.kind==MaterialTextureKind::cube_capture||resource.kind==MaterialTextureKind::cube_faces||resource.kind==MaterialTextureKind::avi)for(std::size_t k=0;k<rgba.size();k+=4)for(unsigned c=0;c<3;++c)rgba[k+c]=rgb5(rgba[k+c]);
     auto& encoded=image_upload_encoded;auto& regions=image_upload_regions;encoded.clear();regions.clear();std::uint32_t w=image.extent.width,h=image.extent.height;
     for(unsigned mip=0;mip<image.mip_levels;++mip){VkBufferImageCopy r{};r.bufferOffset=encoded.size();r.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,mip,layer,1};r.imageExtent={w,h,1};regions.push_back(r);
         bool bc=image.format==VK_FORMAT_BC1_RGB_UNORM_BLOCK||image.format==VK_FORMAT_BC3_UNORM_BLOCK;auto start=encoded.size();auto size=bc?std::size_t(squish::GetStorageRequirements(int(w),int(h),image.format==VK_FORMAT_BC3_UNORM_BLOCK?squish::kDxt5:squish::kDxt1)):std::size_t(w)*h*4;encoded.resize(start+size);
-        if(bc)squish::CompressImage(rgba.data(),int(w),int(h),encoded.data()+start,(image.format==VK_FORMAT_BC3_UNORM_BLOCK?squish::kDxt5:squish::kDxt1)|squish::kColourClusterFit);else std::memcpy(encoded.data()+start,rgba.data(),size);
+        if(bc) {
+            const bool alpha=image.format==VK_FORMAT_BC3_UNORM_BLOCK;
+            const auto stride=std::size_t((w+3)/4)*(alpha?16:8);
+            // BC blocks are independent: keep identical encoded bytes while servicing
+            // the native window between block rows, not after a whole large texture.
+            for(unsigned y=0;y<h;y+=4) {
+                service_window();
+                squish::CompressImage(rgba.data()+std::size_t(y)*w*4,int(w),int(std::min(4u,h-y)),
+                    encoded.data()+start+std::size_t(y/4)*stride,(alpha?squish::kDxt5:squish::kDxt1)|squish::kColourClusterFit);
+            }
+        } else std::memcpy(encoded.data()+start,rgba.data(),size);
         if(mip+1<image.mip_levels){unsigned nw=std::max(1u,w/2),nh=std::max(1u,h/2);for(unsigned y=0;y<nh;++y)for(unsigned x=0;x<nw;++x)for(unsigned c=0;c<4;++c){unsigned sum=0,n=0;for(unsigned dy=0;dy<2;++dy)for(unsigned dx=0;dx<2;++dx){unsigned sx=std::min(w-1,x*2+dx),sy=std::min(h-1,y*2+dy);sum+=rgba[(std::size_t(sy)*w+sx)*4+c];++n;}auto value=std::uint8_t(sum/n);if(c<3&&(resource.kind==MaterialTextureKind::cube_capture||resource.kind==MaterialTextureKind::cube_faces))value=rgb5(value);rgba[(std::size_t(y)*nw+x)*4+c]=value;}w=nw;h=nh;rgba.resize(std::size_t(w)*h*4);}
     }
     auto staging=upload_bytes(std::as_bytes(std::span(encoded)),16,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);for(auto& region:regions)region.bufferOffset+=staging.offset;auto cmd=begin_commands();
@@ -223,6 +235,7 @@ void VulkanRenderer::State::begin_generation(std::uint64_t next,const Level* nex
     // A dirty-resource rebuild retains this scene's remembered BSP; a real transition (including null) cannot.
     wait_idle();if(generation!=next||level!=next_level)reflection_path.clear();
     for(auto& g:geometry){destroy_buffer(g.vertices);destroy_buffer(g.indices);}geometry.clear();destroy_buffer(world_vertex_buffer);world_vertices.clear();
+    destroy_buffer(world_index_buffer);destroy_buffer(patch_index_buffer);
     for(auto& i:images)destroy_image(i.image);images.clear();image_names.clear();font_atlases.clear();material_ids.clear();named_material_ids.clear();mesh_ids.clear();object_lighting.clear();transient_lighting.clear();
     if(pass_materials.size()>1)pass_materials.resize(1);
     if(material_coverage.size()>1)material_coverage.resize(1);interface_geometry.clear();
@@ -237,7 +250,8 @@ void VulkanRenderer::State::prepare_level_resources(const Level& next,std::uint6
     auto notify=[&](float value){if(progress)progress(context,value);};
     constexpr std::size_t map_bytes=128*128*3;
     std::vector<std::uint8_t> normalized(next.lightmaps.size()*map_bytes);
-    for(std::size_t k=0;k<next.lightmaps.size();++k)normalize_lightmap(next.lightmaps[k],std::span<std::uint8_t,map_bytes>(normalized.data()+k*map_bytes,map_bytes));
+    service_window();
+    for(std::size_t k=0;k<next.lightmaps.size();++k){service_window();normalize_lightmap(next.lightmaps[k],std::span<std::uint8_t,map_bytes>(normalized.data()+k*map_bytes,map_bytes));}
     notify(0.4f);
     int divisor=std::min(original.lightmap_divisor,128),side=128/divisor;std::vector<std::uint8_t> reduced(std::size_t(side)*side*3);
     for(std::size_t k=0;k<next.lightmaps.size();++k){
@@ -251,10 +265,15 @@ void VulkanRenderer::State::prepare_level_resources(const Level& next,std::uint6
     for(auto& shader:next.shaders)resolve_material(*this,shader.name,false);
     world_vertices.reserve(next.vertices.size());for(auto& v:next.vertices)world_vertices.push_back(from_world(v));
     world_vertex_buffer=immutable_buffer(*this,std::span<const RenderVertex>(world_vertices),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    // PL indices already form one immutable uint16 allocation; surfaces borrow
+    // their original local-index slices instead of allocating/submitting each tiny list.
+    world_index_buffer=immutable_buffer(*this,std::span<const std::uint16_t>(next.indices),VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    std::vector<std::uint32_t> patch_indices;
     notify(0.6f);
     world_geometry.reserve(next.surfaces.size());world_bounds.reserve(next.surfaces.size());surface_stamps.resize(next.surfaces.size());
     std::array<Bounds,2> sky_bounds{};std::array<bool,2> has_sky{};
     for(std::uint32_t ordinal=0;ordinal<next.surfaces.size();++ordinal){
+        service_window();
         const auto& surface=next.surfaces[ordinal];auto material_id=resolve_material(*this,next.shaders.at(surface.shader).name,false);DrawGeometry g;g.identity.generation=generation;g.identity.surface=ordinal;g.world=true;g.material=material_id;
         if(surface.type==SurfaceType::patch){tessellate(next,surface,g.final_pose,g.indices32);g.index_type=VK_INDEX_TYPE_UINT32;}
         else if(surface.type==SurfaceType::planar||surface.type==SurfaceType::triangle_soup){auto indices=std::span(next.indices).subspan(surface.first_index,surface.index_count);g.indices16.assign(indices.begin(),indices.end());g.index_type=VK_INDEX_TYPE_UINT16;
@@ -262,8 +281,14 @@ void VulkanRenderer::State::prepare_level_resources(const Level& next,std::uint6
             for(auto index:g.indices16)if(index>=g.final_pose.size())throw std::runtime_error("PL surface index outside local vertex range");
         }else throw std::runtime_error("Unsupported typed PL surface");
         auto& m=pass_materials.at(material_id);g.dynamic=!m.deforms.empty();if(g.dynamic){g.rest_pose=g.final_pose;g.scratch.resize(g.final_pose.size());}
-        if(g.index_type==VK_INDEX_TYPE_UINT16)g.indices=immutable_buffer(*this,std::span<const std::uint16_t>(g.indices16),VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-        else g.indices=immutable_buffer(*this,std::span<const std::uint32_t>(g.indices32),VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        if(g.index_type==VK_INDEX_TYPE_UINT16) {
+            const auto offset=VkDeviceSize(surface.first_index)*sizeof(std::uint16_t);
+            g.index_range={world_index_buffer.handle,offset,VkDeviceSize(g.indices16.size())*sizeof(std::uint16_t),world_index_buffer.address+offset};
+        } else {
+            g.index_range.offset=VkDeviceSize(patch_indices.size())*sizeof(std::uint32_t);
+            g.index_range.size=VkDeviceSize(g.indices32.size())*sizeof(std::uint32_t);
+            patch_indices.insert(patch_indices.end(),g.indices32.begin(),g.indices32.end());
+        }
         if(!g.dynamic){if(surface.type==SurfaceType::patch)g.vertices=immutable_buffer(*this,std::span<const RenderVertex>(g.final_pose),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
             else{g.final_vertices={world_vertex_buffer.handle,VkDeviceSize(surface.first_vertex)*sizeof(RenderVertex),VkDeviceSize(surface.vertex_count)*sizeof(RenderVertex),world_vertex_buffer.address+VkDeviceSize(surface.first_vertex)*sizeof(RenderVertex)};}}
         g.topology_signature=g.index_type==VK_INDEX_TYPE_UINT16?hash_bytes(std::as_bytes(std::span(g.indices16))):hash_bytes(std::as_bytes(std::span(g.indices32)));
@@ -272,6 +297,10 @@ void VulkanRenderer::State::prepare_level_resources(const Level& next,std::uint6
         Bounds capture_bounds=bounds;if(surface.type==SurfaceType::patch){capture_bounds={{INFINITY,INFINITY,INFINITY},{-INFINITY,-INFINITY,-INFINITY}};for(auto& v:g.final_pose){auto p=v.position;capture_bounds.minimum={std::min(capture_bounds.minimum.x,p.x),std::min(capture_bounds.minimum.y,p.y),std::min(capture_bounds.minimum.z,p.z)};capture_bounds.maximum={std::max(capture_bounds.maximum.x,p.x),std::max(capture_bounds.maximum.y,p.y),std::max(capture_bounds.maximum.z,p.z)};}}
         Vec3 center=(capture_bounds.minimum+capture_bounds.maximum)*0.5f;for(unsigned k=0;k<m.passes.size();++k)if(m.passes[k].source_mode==MaterialSourceMode::cube){auto& r=images[m.image_ids[k]];if(r.capture){r.center=r.center_set?cube_capture_center(r.center,center):center;r.center_set=true;}}
         world_geometry.push_back(std::uint32_t(geometry.size()));world_bounds.push_back(cache_bounds(bounds));geometry.push_back(std::move(g));
+    }
+    patch_index_buffer=immutable_buffer(*this,std::span<const std::uint32_t>(patch_indices),VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    for(auto id:world_geometry)if(geometry[id].index_type==VK_INDEX_TYPE_UINT32) {
+        auto& indices=geometry[id].index_range;indices.buffer=patch_index_buffer.handle;indices.address=patch_index_buffer.address+indices.offset;
     }
     for(unsigned group=0;group<2;++group){sky_centers[group]=(sky_bounds[group].minimum+sky_bounds[group].maximum)*0.5f;sky_radii[group]=has_sky[group]?original_length(sky_centers[group]-sky_bounds[group].minimum):0;}
     world_order.resize(next.surfaces.size());for(std::uint32_t k=0;k<world_order.size();++k)world_order[k]=k;
@@ -298,6 +327,7 @@ void VulkanRenderer::State::prepare_resources(const RenderScene& scene,std::span
     bool reorder=false;if(scene.level&&!preparing_level){for(unsigned k=0;k<world_geometry.size();++k){auto& surface=scene.level->surfaces[k];auto& g=geometry[world_geometry[k]];auto previous=pass_materials[g.material].sort;g.material=resolve_material(*this,scene.level->shaders.at(surface.shader).name,false);reorder=reorder||previous!=pass_materials[g.material].sort;}}
     if(reorder){for(unsigned k=0;k<world_order.size();++k)world_order[k]=k;std::stable_sort(world_order.begin(),world_order.end(),[&](auto a,auto b){return pass_materials[geometry[world_geometry[a]].material].sort<pass_materials[geometry[world_geometry[b]].material].sort;});}
     for(auto& object:scene.objects){
+        service_window();
         if(object.material_override)admit_material(*object.material_override);else resolve_material(*this,object.material);
         if(!object.mesh)continue;auto found=mesh_ids.find(object.mesh);bool changed=found==mesh_ids.end()||geometry[found->second].identity.geometry_generation!=object.geometry_generation;
         if(!changed)continue;DrawGeometry g;g.identity.generation=generation;g.identity.object=reinterpret_cast<std::uintptr_t>(object.mesh);g.identity.geometry_generation=object.geometry_generation;g.primitive=object.mesh->primitive;g.bounds=object.mesh->bounds;g.indices16=object.mesh->indices;
@@ -350,10 +380,11 @@ void VulkanRenderer::State::prepare_frame_geometry(const RenderScene& scene) {
     // Decode clocks before any owned dynamic ranges or render-pass recording exist.
     for(unsigned k=0;k<images.size();++k)if(images[k].kind==MaterialTextureKind::avi)update_video(k);
     for(auto surface_id:world_order){
+        service_window();
         auto id=world_geometry[surface_id];auto& g=geometry[id];auto& m=pass_materials[g.material];PreparedInstance i;i.geometry=id;i.material=g.material;i.world=true;i.visible=true;i.lightmap_selector=level->surfaces[surface_id].lightmap;i.lightmap=i.lightmap_selector<0?0:lightmap_images.at(i.lightmap_selector);i.part_bounds=g.bounds;
         if(m.sky!=MaterialSky::none){unsigned group=m.sky==MaterialSky::normal?0:1;float radius=sky_radii[0]>0?sky_radii[0]:sky_radii[group];if(radius<=0)i.visible=false;else{float scale=camera.far_plane/radius-0.0001f,zscale=group?scale*0.5f:scale;i.model[0]=i.model[5]=scale;i.model[10]=zscale;i.model[12]=camera.position.x-scale*sky_centers[group].x;i.model[13]=camera.position.y-scale*sky_centers[group].y;i.model[14]=camera.position.z-zscale*sky_centers[group].z;}}
         if(!m.deforms.empty()||!g.rest_pose.empty()){if(g.rest_pose.empty())g.rest_pose=g.final_pose;g.final_pose.assign(g.rest_pose.begin(),g.rest_pose.end());g.dynamic=true;deform_owned(*this,g,m,i.model);}
-        if(g.dynamic)publish_geometry(*this,g);else{if(g.vertices.handle)g.final_vertices=range(g.vertices);g.index_range=range(g.indices);g.vertex_count=std::uint32_t(g.final_pose.size());g.index_count=std::uint32_t(g.index_type==VK_INDEX_TYPE_UINT16?g.indices16.size():g.indices32.size());if(!g.payload_signature)g.payload_signature=hash_bytes(std::as_bytes(std::span(g.final_pose)));}
+        if(g.dynamic)publish_geometry(*this,g);else{if(g.vertices.handle)g.final_vertices=range(g.vertices);if(g.indices.handle)g.index_range=range(g.indices);g.vertex_count=std::uint32_t(g.final_pose.size());g.index_count=std::uint32_t(g.index_type==VK_INDEX_TYPE_UINT16?g.indices16.size():g.indices32.size());if(!g.payload_signature)g.payload_signature=hash_bytes(std::as_bytes(std::span(g.final_pose)));}
         append_instance(*this,i);
     }
     transient_lighting.resize(scene.objects.size());
@@ -414,6 +445,7 @@ void VulkanRenderer::State::upload_material_tables(VkCommandBuffer) {
 }
 VkPipeline VulkanRenderer::State::material_pipeline(const PipelineKey& key) {
     for(auto& cached:pipelines)if(cached.key==key)return cached.pipeline;
+    service_window();
     if(key.rays&&(!rt_enabled||!shaders.material_ray_fragment))throw std::runtime_error("Requested ray-query material pipeline is unavailable");
     std::array<VkPipelineShaderStageCreateInfo,2> stages{};for(auto& s:stages){s.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;s.pName="main";}stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=shaders.material_vertex;stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=key.rays?shaders.material_ray_fragment:shaders.material_fragment;
     VkVertexInputBindingDescription vertex{0,sizeof(RenderVertex),VK_VERTEX_INPUT_RATE_VERTEX};constexpr std::array<VkVertexInputAttributeDescription,5> attributes{{{0,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(RenderVertex,position)},{1,0,VK_FORMAT_R32G32_SFLOAT,offsetof(RenderVertex,uv)},{2,0,VK_FORMAT_R32G32_SFLOAT,offsetof(RenderVertex,light_uv)},{3,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(RenderVertex,normal)},{4,0,VK_FORMAT_R32G32B32A32_SFLOAT,offsetof(RenderVertex,color)}}};
@@ -436,7 +468,7 @@ VkPipeline VulkanRenderer::State::material_pipeline(const PipelineKey& key) {
 void VulkanRenderer::State::draw_instance(VkCommandBuffer command,std::uint32_t instance_id,bool interface) {
     if(!active_target)throw std::runtime_error("Material draw requires active target");auto& i=prepared_instances.at(instance_id);auto& g=geometry.at(i.geometry);if(!g.index_count||!i.pass_count)return;
     auto offset=g.final_vertices.offset;vkCmdBindVertexBuffers(command,0,1,&g.final_vertices.buffer,&offset);vkCmdBindIndexBuffer(command,g.index_range.buffer,g.index_range.offset,g.index_type);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,material_layout,0,1,&active_material_set,0,nullptr);
-    for(std::uint32_t ordinal=0;ordinal<i.pass_count;++ordinal){auto id=i.first_pass+ordinal;auto& p=gpu_passes[id];PipelineKey key;key.render_pass=active_target->render_pass;key.samples=active_target->samples;key.primitive=g.primitive;key.cull=MaterialCull(p.blend[3]);key.source=MaterialBlendFactor(p.blend[0]);key.destination=MaterialBlendFactor(p.blend[1]);key.blend=p.modes[2]&32;key.depth_test=p.blend[2]&1;key.depth_write=p.blend[2]&2;key.equal=p.blend[2]&4;key.interface=interface;key.hdr=gpu_frame.flags[0];key.rays=rt_enabled&&!interface&&capture_mode==CaptureMode::ordinary;key.polygon_offset=p.parameters[0];
+    for(std::uint32_t ordinal=0;ordinal<i.pass_count;++ordinal){auto id=i.first_pass+ordinal;auto& p=gpu_passes[id];PipelineKey key;key.render_pass=active_target->render_pass;key.samples=active_target->samples;key.primitive=g.primitive;key.cull=MaterialCull(p.blend[3]);key.source=MaterialBlendFactor(p.blend[0]);key.destination=MaterialBlendFactor(p.blend[1]);key.blend=p.modes[2]&32;key.depth_test=p.blend[2]&1;key.depth_write=p.blend[2]&2;key.equal=p.blend[2]&4;key.interface=interface;key.hdr=gpu_frame.flags[0];key.rays=rt_enabled&&!interface&&capture_mode==CaptureMode::ordinary;key.polygon_offset=(p.modes[2]&64u)?0:p.parameters[0];
         vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,material_pipeline(key));bool pixels=interface&&(gpu_instances[instance_id].metadata[3]&2u);if(pixels&&active_target->extent.width>(std::numeric_limits<std::uint32_t>::max()>>2))throw std::runtime_error("Pixel UI width exceeds push-coordinate range");DrawPush push{instance_id,id,interface?(pixels?(active_target->extent.width<<2)|3u:1u):0u,pixels?std::bit_cast<std::uint32_t>(float(active_target->extent.height)):0u};vkCmdPushConstants(command,material_layout,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,0,sizeof(push),&push);vkCmdDrawIndexed(command,g.index_count,1,0,0,0);
     }
     g.last_submission=submission_serial+1;
@@ -466,7 +498,13 @@ void VulkanRenderer::State::record_interface(VkCommandBuffer command,std::span<c
         PreparedInstance i;i.geometry=id;i.interface=true;i.visible=true;i.color=q.color;i.model=interface_model(q,rect);i.frame_ordinal=ordinal;i.lightmap=0;
         i.material=q.font_atlas?0:prepared_material(*this,q.shader,q.shader.find("textures")!=std::string_view::npos);append_instance(*this,i);
         auto instance_id=std::uint32_t(prepared_instances.size()-1);gpu_instances.back().metadata[3]=q.drawable_pixel_coordinates?3u:1u;
-        if(q.font_atlas){auto font=font_atlases.find(q.shader);if(font==font_atlases.end())throw std::runtime_error("Renderer.prepare required after font atlas change");auto& p=gpu_passes[prepared_instances[instance_id].first_pass];p.binding={font->second,18,0,0};p.modes[2]|=2;}
+        if(q.font_atlas) {
+            auto font=font_atlases.find(q.shader);if(font==font_atlases.end())throw std::runtime_error("Renderer.prepare required after font atlas change");
+            auto& p=gpu_passes[prepared_instances[instance_id].first_pass];p.binding={font->second,18,0,0};p.modes[2]|=2u|64u;
+            const auto size=images.at(font->second).image.extent;
+            const float half_u=std::min(.5f/size.width,q.uv.width*.5f),half_v=std::min(.5f/size.height,q.uv.height*.5f);
+            p.parameters={q.uv.x+half_u,q.uv.y+half_v,q.uv.x+q.uv.width-half_u,q.uv.y+q.uv.height-half_v};
+        }
     }
     auto saved=gpu_frame.flags;if(active_target==&output_target)gpu_frame.flags[0]=0;gpu_frame.flags[1]=gpu_frame.flags[2]=gpu_frame.flags[3]=0;
     if(prepared_instances.size()>first)upload_material_tables(command);

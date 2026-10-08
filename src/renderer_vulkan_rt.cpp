@@ -102,10 +102,11 @@ void VulkanRenderer::State::destroy_ray_tracing() noexcept {
         auto release=[&](Acceleration& acceleration) {
             if(acceleration.handle&&destroy_acceleration)destroy_acceleration(device,acceleration.handle,nullptr);
             acceleration.handle=VK_NULL_HANDLE;
-            destroy_buffer(acceleration.storage);destroy_buffer(acceleration.scratch);destroy_buffer(acceleration.indices);
+            destroy_buffer(acceleration.storage);destroy_buffer(acceleration.indices);
         };
         for(auto& acceleration:blas[slot])release(acceleration);
         blas[slot].clear();release(tlas[slot]);destroy_buffer(tlas_instances[slot]);ray_build_instances[slot].clear();
+        destroy_buffer(acceleration_scratch[slot]);
     }
     gpu_ray_instances.clear();primitive_map.clear();
 }
@@ -142,7 +143,7 @@ void VulkanRenderer::State::prepare_acceleration(const RenderScene& scene) {
     auto release=[&](Acceleration& acceleration) {
         if(acceleration.handle)destroy_acceleration(device,acceleration.handle,nullptr);
         acceleration.handle=VK_NULL_HANDLE;destroy_buffer(acceleration.storage);
-        destroy_buffer(acceleration.scratch);destroy_buffer(acceleration.indices);
+        destroy_buffer(acceleration.indices);
     };
     while(structures.size()>prepared_instances.size()) {release(structures.back());structures.pop_back();}
     structures.resize(prepared_instances.size());
@@ -176,10 +177,12 @@ void VulkanRenderer::State::prepare_acceleration(const RenderScene& scene) {
         const VkDeviceSize alignment=std::max<VkDeviceSize>(acceleration_properties.minAccelerationStructureScratchOffsetAlignment,1);
         const VkDeviceSize required=std::max(sizes.buildScratchSize,sizes.updateScratchSize);
         if(required>std::numeric_limits<VkDeviceSize>::max()-(alignment-1))throw std::runtime_error("Vulkan AS scratch size overflow");
-        grow(acceleration.scratch,required+alignment-1,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        // All sizes are admitted before recording; this retired slot retains its maximum scratch capacity.
+        grow(acceleration_scratch[frame_index],required+alignment-1,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         acceleration.update_pending=update;acceleration.needs_build=true;acceleration.updateable=true;
     };
     for(std::uint32_t instance_id=0;instance_id<prepared_instances.size();++instance_id) {
+        service_window();
         auto& acceleration=structures[instance_id];acceleration.needs_build=false;
         const auto& instance=prepared_instances[instance_id];
         if(instance.geometry>=geometry.size()||instance_id>=gpu_instances.size())throw std::runtime_error("Vulkan RT instance/geometry table mismatch");
@@ -306,18 +309,25 @@ void VulkanRenderer::State::record_acceleration(VkCommandBuffer command) {
                          VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR|VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,0,1,&inputs,0,nullptr,0,nullptr);
     const auto alignment=std::max<VkDeviceSize>(acceleration_properties.minAccelerationStructureScratchOffsetAlignment,1);
-    for(auto& acceleration:blas[frame_index])if(acceleration.needs_build) {
+    const auto scratch=scratch_address(acceleration_scratch[frame_index],alignment);
+    VkMemoryBarrier scratch_reuse{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    scratch_reuse.srcAccessMask=VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR|VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    scratch_reuse.dstAccessMask=scratch_reuse.srcAccessMask;
+    for(auto& acceleration:blas[frame_index]) {
+        service_window();
+        if(!acceleration.needs_build)continue;
         auto geometry_info=triangle_geometry(acceleration);
         auto info=build_info(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,acceleration,geometry_info);
-        info.scratchData.deviceAddress=scratch_address(acceleration.scratch,alignment);
+        info.scratchData.deviceAddress=scratch;
         VkAccelerationStructureBuildRangeInfoKHR range{};range.primitiveCount=acceleration.primitive_count;
         const VkAccelerationStructureBuildRangeInfoKHR* ranges=&range;
         cmd_build_acceleration(command,1,&info,&ranges);acceleration.needs_build=false;
+        // Scratch reads and writes must finish before the next BLAS or TLAS reuses this address.
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,0,1,&scratch_reuse,0,nullptr,0,nullptr);
     }
     VkMemoryBarrier built{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     built.srcAccessMask=VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;built.dstAccessMask=VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,0,1,&built,0,nullptr,0,nullptr);
     auto& top=tlas[frame_index];
     if(!top.needs_build)throw std::runtime_error("Vulkan RT TLAS was not prepared for the current frame");
     VkAccelerationStructureGeometryKHR instance_geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
@@ -325,7 +335,7 @@ void VulkanRenderer::State::record_acceleration(VkCommandBuffer command) {
     instance_geometry.geometry.instances.sType=VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
     instance_geometry.geometry.instances.data.deviceAddress=tlas_instances[frame_index].address;
     auto info=build_info(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,top,instance_geometry);
-    info.scratchData.deviceAddress=scratch_address(top.scratch,alignment);
+    info.scratchData.deviceAddress=scratch;
     VkAccelerationStructureBuildRangeInfoKHR range{};range.primitiveCount=top.primitive_count;
     const VkAccelerationStructureBuildRangeInfoKHR* ranges=&range;
     cmd_build_acceleration(command,1,&info,&ranges);top.needs_build=false;

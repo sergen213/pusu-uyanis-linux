@@ -59,7 +59,11 @@ void Game::load_bsp(std::string_view name) {
         for(const auto& filename:assets_.names("object/anim/pa/"+std::string(group))) {
             if(filename.size()<3 || !scene_equal(std::string_view(filename).substr(filename.size()-3),".pa")) continue;
             const auto identity=scene_key(filename);
-            if(!animations_.contains(identity)) animations_.emplace(identity,read_animation(assets_.path(filename)));
+            if(!animations_.contains(identity)) {
+                animations_.emplace(identity,read_animation(assets_.path(filename)));
+                // Service the native window only after a complete file is admitted.
+                if(window_servicer_) window_servicer_(loading_context_);
+            }
         }
     }
 }
@@ -1101,7 +1105,7 @@ void Game::configure_actor_material(Entity& e) {
     // no alpha-test/tcmods, tcgen0/base. Appended passes are not re-finalized.
     MaterialPass blood;
     blood.texture.kind = MaterialTextureKind::image;
-    blood.texture.image = "textures/3te/decal_bot_blood_01";
+    blood.texture.image = "textures/3te_decal/bot_blood_01";
     blood.source_mode = MaterialSourceMode::image;
     blood.blend = true;
     blood.blend_source = MaterialBlendFactor::src_alpha;

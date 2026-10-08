@@ -56,10 +56,12 @@ public:
     using LoadingPresenter = void (*)(void*,std::string_view,float);
     using LevelPreparer = void (*)(void*,const Level&,std::uint64_t,std::string_view);
     using ScenePreparer = void (*)(void*,const RenderScene&,std::string_view);
+    using WindowServicer = void (*)(void*);
     void set_loading_presenter(void* context,LoadingPresenter presenter,
-                               LevelPreparer preparer=nullptr,ScenePreparer scene_preparer=nullptr) noexcept {
+                               LevelPreparer preparer=nullptr,ScenePreparer scene_preparer=nullptr,
+                               WindowServicer window_servicer=nullptr) noexcept {
         loading_context_=context;loading_presenter_=presenter;level_preparer_=preparer;
-        scene_preparer_=scene_preparer;
+        scene_preparer_=scene_preparer;window_servicer_=window_servicer;
     }
     void action(const MenuAction& action);
     void save(const std::filesystem::path& destination) const;
@@ -248,6 +250,7 @@ private:
     LoadingPresenter loading_presenter_{};
     LevelPreparer level_preparer_{};
     ScenePreparer scene_preparer_{};
+    WindowServicer window_servicer_{};
     std::string loading_shader_;
     void load_language();
     void dispatch_actor_events();

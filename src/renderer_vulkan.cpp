@@ -341,6 +341,14 @@ void VulkanRenderer::State::apply_original_options(const OriginalGraphicsOptions
     else if(sampler_change)refresh_samplers();
     if(history_change)reset_history();
 }
+void VulkanRenderer::State::service_window() {
+    const auto now=SDL_GetTicks();
+    if(now-window_service_tick<50)return;
+    window_service_tick=now;
+    // Pump native window/WM protocol only. The main loop retains Quit/input ownership;
+    // never dispatch game actions or loading presents from an upload/recording batch.
+    SDL_PumpEvents();
+}
 void VulkanRenderer::State::retire_frame(FrameSlot& frame) {
     if(frame.recording)throw std::runtime_error("Vulkan cannot retire a recording frame");
     if(frame.submitted){checked(vkWaitForFences(device,1,&frame.fence,VK_TRUE,UINT64_MAX),"wait reusable frame");completed_serial=std::max(completed_serial,frame.serial);frame.submitted=false;}
@@ -393,6 +401,7 @@ bool VulkanRenderer::State::present() {
 }
 VkCommandBuffer VulkanRenderer::State::begin_commands() {
     if(immediate_recording||frames[frame_index].recording)throw std::runtime_error("Vulkan nested command/upload batch is forbidden");
+    service_window();
     auto& frame=frames[frame_index];
     // Captures/uploads share owned ranges, not a recording render pass or borrowed decoder storage.
     if(frame.submitted){checked(vkWaitForFences(device,1,&frame.fence,VK_TRUE,UINT64_MAX),"wait upload slot");completed_serial=std::max(completed_serial,frame.serial);frame.submitted=false;}
@@ -583,7 +592,7 @@ void VulkanRenderer::prepare(const RenderScene& scene,std::span<const InterfaceQ
 }
 void VulkanRenderer::prepare_level(const Level& level,std::uint64_t generation,LevelProgress progress,void* context) {
     auto& state=*state_;if(state.acquired||state.immediate_recording)throw std::runtime_error("Vulkan level callback crossed an unfinished frame/upload");
-    state.wait_idle();state.retire_frame(state.frames[state.frame_index]);state.prepare_level_resources(level,generation,progress,context);state.resources_dirty=true;
+    state.wait_idle();state.retire_frame(state.frames[state.frame_index]);state.prepare_level_resources(level,generation,progress,context);
 }
 void VulkanRenderer::prepare_reflections(const RenderScene& scene,std::string_view path) {
     auto& state=*state_;if(state.acquired||state.immediate_recording)throw std::runtime_error("Vulkan reflection preparation crossed an unfinished frame/upload");

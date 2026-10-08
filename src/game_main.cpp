@@ -310,10 +310,22 @@ int game_loop(Window& window, pusu::AssetStore& assets, pusu::MaterialLibrary& m
         Window& window; RendererDispatch& renderer; pusu::Interface& interface;
         pusu::Settings& settings; pusu::MaterialLibrary& materials; bool& prepared; pusu::Game& game;
         pusu::Game::LoadingPresenter present{};
+        Uint32 last_service_tick{};
+        void service_window() {
+            const Uint32 now=SDL_GetTicks();
+            if(now-last_service_tick>=50) {
+                SDL_PumpEvents();
+                last_service_tick=SDL_GetTicks();
+            }
+        }
         ~LoadingContext() { game.set_loading_presenter(nullptr, nullptr); }
     } loading{window, renderer, interface, settings, materials, prepared, game};
     loading.present = +[](void* context, std::string_view shader, float progress) {
         auto& state = *static_cast<LoadingContext*>(context);
+        // Synchronous loading still owns the native window. Service WM/display
+        // messages without consuming input or reentering Game/menu actions.
+        SDL_PumpEvents();
+        state.last_service_tick=SDL_GetTicks();
         int width{}, height{};
         state.window.drawable_size(width,height);
         if (width <= 0 || height <= 0) return;
@@ -349,6 +361,9 @@ int game_loop(Window& window, pusu::AssetStore& assets, pusu::MaterialLibrary& m
             // rebuilds and prepares current UI before rendering; reflections need only the scene.
             state.renderer.prepare(scene, {});
             state.renderer.prepare_reflections(scene, bsp_path);
+        },
+        +[](void* context) {
+            static_cast<LoadingContext*>(context)->service_window();
         });
     refresh_game_size();
     game.boot();
