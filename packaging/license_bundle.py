@@ -70,7 +70,7 @@ _GNU = {
 }
 _COPYRIGHT = re.compile(r"(?:copyright\s*:?\s*(?:\(c\)|©)?|©|\(c\))\s*\d{4}", re.IGNORECASE)
 _LICENSE_TERMS = re.compile(r"permission is (?:hereby )?granted|redistribution and use|licen[cs]e|public domain|waiver", re.IGNORECASE)
-_SCOPED_GRANT = re.compile(r"permission is (?:hereby )?granted|permission to (?:use|copy).{0,160}granted|authors hereby grant permission to use, copy, modify|redistribution and use|public domain|free software.{0,100}redistribut|licen[cs]ed under|may.{0,40}(?:use|redistribut|copy)|(?:hereby )?grants.{0,256}patent\s+licen[cs]e|distribute and use freely;\s*there are no restrictions on further\s+dissemination and usage", re.IGNORECASE | re.DOTALL)
+_SCOPED_GRANT = re.compile(r"permission is (?:hereby )?granted|permission to (?:use|copy).{0,160}granted|authors hereby grant permission to use, copy, modify|redistribution and use|public domain|free software.{0,100}redistribut|licen[cs]ed under|may.{0,40}(?:use|redistribut|copy)|(?:hereby )?grants.{0,256}patent\s+licen[cs]e|distribute and use freely;\s*there are no restrictions on further\s+dissemination and usage|as long as you retain this notice you can do whatever you want with this stuff", re.IGNORECASE | re.DOTALL)
 _OPTIONAL_CREDIT_GRANT = re.compile(r"use this source code in any fashion you see fit.{0,160}giving me credit.{0,160}(?:is\s+)?optional", re.IGNORECASE | re.DOTALL)
 _SOURCE_DUTY = re.compile(r"GNU (?:Lesser |Affero )?General Public License|Mozilla Public License|(?:must|shall|required).{0,100}(?:supply|provide|deliver|available).{0,50}source|source.{0,50}(?:must|shall).{0,100}(?:supply|provide|deliver|available)", re.IGNORECASE | re.DOTALL)
 _PUBLIC_DOMAIN_GRANT = re.compile(r"(?:is|are)\s+(?:now\s+)?in\s+(?:the\s+)?public domain|(?:dedicat|releas|plac)\w*.{0,160}public domain", re.IGNORECASE | re.DOTALL)
@@ -294,7 +294,7 @@ def _resolve(entry: dict, members: list[dict], base: Path, strict: bool, *, proj
         path = _asset(value.get("terms"), base, hashed=True)
         text = path.read_text(encoding="utf-8")
         # Match presentation, never rewrite the hash-bound delivered terms.
-        grant_text = " ".join(re.sub(r"(?m)^[ \t]*\* ?", "", text).split())
+        grant_text = " ".join(re.sub(r'(?m)^[ \t]*(?:\* ?|\.\\["] ?)', "", text).split())
         if not (_SCOPED_GRANT.search(grant_text) or _OPTIONAL_CREDIT_GRANT.search(grant_text)):
             raise ValueError("license_scopes terms do not establish an actual grant or waiver")
         if delivery == "notice-only" and (re.search(r"\b(?:A?GPL|LGPL|MPL)(?:[-0-9]|$)", label) or _SOURCE_DUTY.search(grant_text)):
@@ -927,10 +927,20 @@ def _check_conditional_delivery() -> None:
         patent_grant = root / "PATENT-GRANT"
         patent_grant.write_text("Google hereby grants to you a perpetual, worldwide, non-exclusive,\nno-charge, irrevocable (except as stated in this section) patent\nlicense to make, have made, use, offer to sell, sell, import,\ntransfer, and otherwise run, modify and propagate the contents of this implementation.\n", encoding="utf-8")
         deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(patent_grant)}]})
+        beerware_grant = root / "BEERWARE-GRANT"
+        beerware_grant.write_text('"THE BEER-WARE LICENSE" (Revision 42):\n<fixture@example.org> wrote this file. As long as you retain this notice you\ncan do whatever you want with this stuff. If we meet some day, and you think\nthis stuff is worth it, you can buy me a beer in return.\n', encoding="utf-8")
+        deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(beerware_grant)}]})
+        roff_grant = root / "ROFF-BEERWARE-GRANT"
+        roff_grant.write_text("\n".join('.\\" ' + line for line in beerware_grant.read_text(encoding="utf-8").splitlines()) + "\n", encoding="utf-8")
+        deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(roff_grant)}]})
         wrapped_gnu = root / "WRAPPED-GNU-GRANT"
         wrapped_gnu.write_text("/*\n * This component is free software; you can redistribute it\n * under the GNU General Public\n * License, version 3.\n */\n", encoding="utf-8")
         for strict in (False, True):
             deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(wrapped_gnu)}]}, False, strict=strict)
+        roff_gnu = root / "ROFF-GNU-GRANT"
+        roff_gnu.write_text('.\\" This component is free software; you can redistribute it\n.\\" under the GNU General Public\n.\\" License, version 3.\n', encoding="utf-8")
+        for strict in (False, True):
+            deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": hashed(roff_gnu)}]}, False, strict=strict)
         for strict in (False, True):
             deliver({**scoped, "license_scopes": [{**scoped["license_scopes"][0], "terms": {"path": imperative.name, "sha256": "0" * 64}}]}, False, strict=strict)
         deliver({**scoped, "notices": []})

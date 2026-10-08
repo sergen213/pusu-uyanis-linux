@@ -1,0 +1,11 @@
+--- a/src/runtime/Makefile
++++ b/src/runtime/Makefile
+@@ -6,7 +6,7 @@
+ all: runtime
+ 
+ runtime: runtime.c
+-	$(CC) -I/usr/local/include/squashfuse -I/usr/include/fuse3 $(CFLAGS) $^ $(LIBS) -o $@
++	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LIBS) -o $@
+ 
+ clean:
+ 	rm -f runtime

@@ -25,6 +25,22 @@
 !/packaging/license_bundle.py
 !/packaging/check_packaging.py
 !/packaging/pusu.desktop
+!/packaging/public-provenance.json
+!/packaging/licenses/
+!/packaging/licenses/pusu-native/
+!/packaging/licenses/pusu-native/public-build.json
+!/packaging/licenses/dbus/
+!/packaging/licenses/dbus/build-owned-client.py
+!/packaging/licenses/libgcc/
+!/packaging/licenses/libgcc/rebuild-runtime.sh
+!/packaging/licenses/libgcc/runtime-libdir.patch
+!/packaging/sources/
+!/packaging/sources/public-runtime/
+!/packaging/sources/public-runtime/build.sh
+!/packaging/sources/public-runtime/build-gcab.sh
+!/packaging/sources/public-runtime/runtime-portable-path.patch
+!/packaging/sources/public-runtime/runtime-includes.patch
+!/packaging/sources/public-runtime/libfuse-modification-notice.patch
 !/packaging/art/
 !/packaging/art/installer.png
 !/packaging/art/pusu.png
@@ -36,5 +52,6 @@
 **/.cache/
 **/__pycache__/
 *.py[cod]
-# packaging/provenance.json, licenses/ and sources/ intentionally stay private:
-# machine-specific build evidence and bulk upstream compliance material.
+# Only the reviewed public provenance and authored rebuild controls above enter Git.
+# Bulk upstream source/notices/relink evidence stays in matched release companions;
+# packaging/provenance.json and all unlisted machine-private evidence remain excluded.

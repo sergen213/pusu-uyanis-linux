@@ -8,7 +8,7 @@ You need your own original game media to play. Disc images, Windows executables,
 
 This is an in-development engine, not a claim of complete campaign compatibility. Native checks and selected OpenGL, Vulkan and installation probes have passed in the development environment; a user-reported flicker/noise issue is still unidentified and unresolved. Full campaign completion, cross-distribution builds and older-CPU compatibility are not established.
 
-**There is no public-release-cleared AppImage yet.** The existing local AppImage is classified for private local use. Dependency corresponding-source/build mapping, runtime static-dependency/relinking evidence and original-artwork distribution rights remain unresolved. Source publication and the new project license do not retroactively clear that binary.
+The public AppImage is rebuilt separately from the older private local images. Its matching source/build/relink companions preserve dependency materials and recipients' applicable source/replacement rights; publishing new source does not retroactively clear an older binary or relicense original game artwork. Download the installer and all corresponding source companions from [GitHub Releases](https://github.com/sergen213/pusu-uyanis-linux/releases).
 
 ## Build requirements
 
@@ -97,11 +97,13 @@ build/bin/pusu-game --capabilities
 
 HDR tonemapping is SDR output, not an HDR10 display-output claim. No minimum CPU generation or performance guarantee has been established for a public binary.
 
+The current binary build cohort targets **x86_64-v3** and requires **glibc 2.44 or newer**: the selected FFmpeg `libavutil` imports `GLIBC_2.44`. The static AppImage runtime does not remove that native-library requirement. Older distributions need a source build against their own compatible dependencies; this binary is not a cross-distribution compatibility claim.
+
 ## Packaging source
 
 `packaging/build_appimage.py`, `license_bundle.py`, `check_packaging.py` and `pusu.desktop` are retained as authored packaging sources. The AppImage recipe consumes the directory containing the three executables (`build/bin`, not `build`) and accepts an explicit provenance manifest. It also requires separately supplied runtime, dependency and license/source evidence.
 
-Machine-specific `packaging/provenance.json`, bulk `packaging/licenses/` and `packaging/sources/` are intentionally excluded from Git, as are generated packages. The checkout is therefore **not** the complete evidence bundle for the existing private AppImage and does not establish reproducible or redistributable AppImage production. Do not bypass evidence checks or treat `--redistributable` as a license grant.
+The reviewed `packaging/public-provenance.json`, native producer recipe and selected authored runtime/library rebuild controls are published. Machine-private `packaging/provenance.json`, bulk upstream sources/notices/build evidence and generated packages remain excluded from Git. The matched release companions carry the required bulk materials, including the static runtime's recipient rebuild/relink kit; the checkout alone is not that complete material bundle. Recorded original source paths identify production inputs, not a promise that a clean checkout reproduces their filesystem layout or historical bytes. Do not bypass evidence checks or treat `--redistributable` as a license grant.
 
 By default, validated source archives, recipes and build/relink materials remain embedded in the AppImage. Adding `--source-prefix /path/to/release/Pusu-sources` to the existing build command instead creates `Pusu-sources-001.tar`, `Pusu-sources-002.tar`, etc., beside `--output` (the prefix and binary must share a directory). These uncompressed, independently extractable companions preserve every delivered material path under `usr/share/licenses/<package>/source/`; identical bytes use earlier same-part hardlinks, never links into another part. Each complete tar is strictly below 1,900,000,000 bytes including headers/padding; an oversized material/alias group fails rather than dropping bytes. Notices and source-availability directions remain inside the full-feature AppImage, and its `usr/share/pusu/manifest.json` records companion filenames, SHA256 checksums, byte sizes and each material's archive/member location.
 

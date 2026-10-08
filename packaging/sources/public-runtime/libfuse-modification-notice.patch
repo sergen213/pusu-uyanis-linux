@@ -1,0 +1,13 @@
+--- a/lib/mount.c
++++ b/lib/mount.c
+@@ -1,5 +1,10 @@
+ /*
+   FUSE: Filesystem in Userspace
+   Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
++
++  Modified for the Pusu public runtime distribution on 2026-10-08:
++  the retained AppImage type2-runtime mount.c.diff makes the mount helper
++  selectable through FUSERMOUNT_PROG; this dated notice is also added.
++  Original copyright and upstream licensing terms are retained below.
+ 
+   Architecture specific file system mounting (Linux).
