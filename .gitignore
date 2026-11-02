@@ -55,3 +55,4 @@
 # Only the reviewed public provenance and authored rebuild controls above enter Git.
 # Bulk upstream source/notices/relink evidence stays in matched release companions;
 # packaging/provenance.json and all unlisted machine-private evidence remain excluded.
+!/CONTRIBUTING.md
