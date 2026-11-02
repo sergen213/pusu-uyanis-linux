@@ -1,0 +1,88 @@
+# Development
+
+Build details, tests, packaging and release history for Pusu: Uyanış native Linux. The short build recipe is in the [README](../README.md#build-from-source).
+
+## Build requirements
+
+Install development headers/libraries and tools matching `CMakeLists.txt`. Distribution package names vary; the identifiers below are authoritative, not a tested cross-distro package-install recipe.
+
+- CMake **3.20+**, **Ninja**, a **C++20** compiler, `pkg-config`, and a working Linux development toolchain.
+- CMake packages: `OpenSSL` (component `Crypto`), `ZLIB`, `PNG`, `Threads`, `OpenGL`, `GLEW`, `Vulkan`.
+- pkg-config modules: `libarchive`, `gio-2.0`, `gtk+-3.0`, `json-c`, `sdl2`, `SDL2_image`, `SDL2_mixer`, `libavformat`, `libavcodec`, `libavutil`, `libswresample`, `libswscale`.
+- `glslangValidator` or `glslang` for build-time Vulkan shader compilation.
+- libsquish: `squish.h` and the `squish` library.
+- Native libmsi: `libmsi.h` and `msi-1.0`; native libgcab: `libgcab.h` and `gcab-1.0`.
+- Python 3 interpreter when `BUILD_TESTING=ON` (the default).
+
+Both renderer stacks and the GTK/importer dependencies are required by the current build, even if you intend to use only OpenGL. Compiling does not require the original game asset library; the two retained installer/launcher PNGs are build inputs.
+
+## Configure, build and check
+
+The CMake default for `PUSU_MSI_ROOT` points into the unpublished `.work/disc/tools/usr` tree. **Override it with your actual libmsi/libgcab development prefix.** For dependencies installed under `/usr`:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DPUSU_MSI_ROOT=/usr -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+If the headers/libraries use a different layout, pass all four explicit CMake cache definitions instead: `PUSU_MSI_INCLUDE` (directory containing `libmsi.h`), `PUSU_MSI_LIBRARY` (actual library file), `PUSU_GCAB_INCLUDE` (directory containing `libgcab.h`) and `PUSU_GCAB_LIBRARY` (actual library file).
+
+Use Ninja for checkout paths containing `:`: CMake's Unix Makefiles generator emits invalid Make dependencies for those paths.
+
+The optional prefix-copy block currently names `libmsi-1.0.so.0.0.0` and `libgcab-1.0.so.0.3.0` under the prefix's `lib/`; other layouts/versioned filenames are not validated here. The commands above describe the source configuration, not a guarantee of a clean-clone build on every distribution.
+
+Executables are produced in `build/bin/`. CTest registers nine checks. `build/bin/check_interface` is also built, but is not registered with CTest and requires an original asset root:
+
+```sh
+build/bin/check_interface "$ASSET_ROOT"
+```
+
+An optional native install is:
+
+```sh
+cmake --install build --prefix "$HOME/.local/opt/pusu-native"
+```
+
+This installs executables and the two UI images; it does **not** import media or create a game shortcut. The native media installer performs those steps.
+
+## Extraction only
+
+For extraction only, without a runtime installation or shortcuts:
+
+```sh
+build/bin/pusu-installer --extract-only "$OWN_CUE" --destination "$ASSET_ROOT"
+```
+
+Set `OWN_CUE` to your media path and `ASSET_ROOT` to the new extraction directory. CUE support is limited to one sibling quoted `BINARY` file with `TRACK 01 MODE1/2352` and `INDEX 01 00:00:00`; it is not a general multi-track disc reader. Extraction requires an absent destination.
+
+## Rendering fixes in v0.1.1
+
+- Menu glyphs keep the original font metrics and linear filtering, but sample only inside their atlas cells. This prevents separator lines bleeding into scaled OpenGL/Vulkan text.
+- Actor death overlays use the original masked blood texture instead of a missing-resource diagnostic. Restoring an older checkpoint corrects only that specific actor-owned texture identifier; custom materials and saved color/alpha state are retained. Real engine-damage/rendering checks preserve the corpse's clothing colors in OpenGL and Vulkan; these are not full natural-combat or campaign validations.
+- Vulkan shares immutable world-index uploads and uses two fence-owned acceleration-structure scratch buffers instead of separate scratch allocations per structure. Per-structure storage remains separate. Loading services the native window during GPU preparation and between complete animation-file admissions, without consuming queued application events or disabling ray tracing.
+
+The [v0.1.1-linux release](https://github.com/sergen213/pusu-uyanis-linux/releases/tag/v0.1.1-linux) includes these fixes and its matching source/build companions. Its actual BIN/CUE GUI installation, desktop shortcuts, settings save/reload, and native OpenGL/Vulkan launches were verified. The earlier v0.1.0 AppImage does not contain the fixes; install the new version into a fresh directory to leave an existing installation untouched.
+
+## Release sources
+
+The public AppImage is rebuilt separately from the older private local images. Its matching source/build/relink companions preserve dependency materials and recipients' applicable source/replacement rights; publishing new source does not retroactively clear an older binary or relicense original game artwork. Download the installer and all corresponding source companions from [GitHub Releases](https://github.com/sergen213/pusu-uyanis-linux/releases).
+
+## Packaging source
+
+`packaging/build_appimage.py`, `license_bundle.py`, `check_packaging.py` and `pusu.desktop` are retained as authored packaging sources. The AppImage recipe consumes the directory containing the three executables (`build/bin`, not `build`) and accepts an explicit provenance manifest. It also requires separately supplied runtime, dependency and license/source evidence.
+
+The reviewed `packaging/public-provenance.json`, native producer recipe and selected authored runtime/library rebuild controls are published. Machine-private `packaging/provenance.json`, bulk upstream sources/notices/build evidence and generated packages remain excluded from Git. The matched release companions carry the required bulk materials, including the static runtime's recipient rebuild/relink kit; the checkout alone is not that complete material bundle. Recorded original source paths identify production inputs, not a promise that a clean checkout reproduces their filesystem layout or historical bytes. Do not bypass evidence checks or treat `--redistributable` as a license grant.
+
+By default, validated source archives, recipes and build/relink materials remain embedded in the AppImage. Adding `--source-prefix /path/to/release/Pusu-sources` to the existing build command instead creates `Pusu-sources-001.tar`, `Pusu-sources-002.tar`, etc., beside `--output` (the prefix and binary must share a directory). These uncompressed, independently extractable companions preserve every delivered material path under `usr/share/licenses/<package>/source/`; identical bytes use earlier same-part hardlinks, never links into another part. Each complete tar is strictly below 1,900,000,000 bytes including headers/padding; an oversized material/alias group fails rather than dropping bytes. Notices and source-availability directions remain inside the full-feature AppImage, and its `usr/share/pusu/manifest.json` records companion filenames, SHA256 checksums, byte sizes and each material's archive/member location.
+
+**Publish every numbered companion beside the matching binary**, with equivalent download access and no additional charge, not merely source URLs. Recipients must verify the recorded checksums/sizes and run `tar -xf <companion-file>` for every part into the same empty directory; package `NOTICE.txt` files identify the extracted source/recipe/build/relink paths and subsequent unpacking. The builder stages all assets privately and publishes them without replacing existing paths only after AppImage assembly succeeds. This delivery option supports the recorded GNU/MPL source-access obligations; it does not establish redistribution rights, clear unresolved provenance/artwork issues, or declare a public release ready.
+
+The strict license bundler checks conditional delivery, not legal clearance: genuine notices suffice for supported notice-only grants, while optional source URLs/pinning and unverified optional correspondence remain audit diagnostics. GNU delivery requires hash-verified local source archives, original-ELF mapping and build materials, not necessarily a remote immutable URL. MPL-1.1/2.0 require mapped covered-source archives plus a hash-bound `source.availability_notice` identifying the MPL source and the delivered archive filenames (or the package `NOTICE.txt` archive list); MPL-1.1 additionally needs its covered build/install scripts in `source.recipe` or `source.covered_build_scripts`. MPL-2.0 does not impose a GNU whole-work recipe. Evidence-backed `licenses` overrides must resolve elected/component scope; no permissive OR branch or WITH source waiver is inferred. False `copyright_complete` audit flags are preserved, explicit unresolved duties still block strict delivery, and invalid claimed evidence remains fatal in either mode.
+
+Nonstandard component grants can be recorded explicitly as `license_scopes: [{license, scope, delivery, terms: {path, sha256}}]`: `license` matches the exact declared component ID, `scope` identifies the included code and applicable grant, and `delivery` is `notice-only` or `source-required`. Hash-bound genuine grant/waiver terms are copied as notices; these reviewed scope attestations never silently relabel custom grants as MIT or waive GNU/MPL source duties. `source-required` retains mapped local archives and build recipes. Genuine software public-domain dedication/release notices do not require an invented copyright author.
+
+Explicit custom optional-attribution grants retain their original author credits and hash-bound permission text. The automatic copyright-year check is skipped only when every declared component grant is genuinely public-domain or explicitly optional-attribution; a mixed MIT/BSD/GNU/MPL component does not inherit that exemption.
+
+An explicitly evidence-backed Artistic-1.0 section 4(a) Standard Version election can use `delivery: "standard-version"` with actual source archives and hash-bound `source.availability_notice` recipient acquisition directions. This does not assert downstream corresponding-source identity or impose GNU whole-work build requirements; absent directions/source and invalid claimed evidence still fail.

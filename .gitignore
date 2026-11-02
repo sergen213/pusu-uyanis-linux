@@ -4,6 +4,8 @@
 !/README.md
 !/LICENSE
 !/CMakeLists.txt
+!/docs/
+!/docs/DEVELOPMENT.md
 
 !/src/
 !/src/**/
